@@ -23,10 +23,10 @@ from typing import Optional
 
 try:                                    # package-relative when vendored
     from .core import SchemaGraph, Observation, Action
-    from .prompts import EXTRACT_SYS, REWRITE_SYS, ANSWER_SYS
+    from .prompts import CLEAN_SYS, EXTRACT_SYS, REWRITE_SYS, ANSWER_SYS
 except ImportError:                     # flat import in dev
     from core import SchemaGraph, Observation, Action
-    from prompts import EXTRACT_SYS, REWRITE_SYS, ANSWER_SYS
+    from prompts import CLEAN_SYS, EXTRACT_SYS, REWRITE_SYS, ANSWER_SYS
 
 
 def _extract_json(text: str) -> dict:
@@ -143,34 +143,61 @@ class SchemaMemorySystem:
                     return k
         return e or "user"
 
+    # ---- L1: raw episode -> self-contained, subject-bound facts ------------
+    def _clean_to_facts(self, text: str, known: list) -> list:
+        """L1 stage: rewrite a raw dialogue chunk into subject-bound self-contained
+        facts. Returns [{"subject": <entity>, "text": <fact>}, ...]."""
+        hint = f"PARTICIPANTS (use these exact names as subjects): {known}\n" if known else ""
+        user = f"{hint}RAW DIALOGUE (one episode):\n{text}\n\nJSON:"
+        parsed = _extract_json(self._chat(CLEAN_SYS, user, max_tokens=800))
+        facts = []
+        for f in parsed.get("facts", []):
+            ftext = (f.get("text") or "").strip()
+            if not ftext:
+                continue
+            subject = self._clean_entity(f.get("subject"), known=known)
+            facts.append({"subject": subject, "text": ftext})
+        return facts
+
     # ---- WRITE: L1 clean -> L2 extract -> L3 ingest ------------------------
     def add_chunk(self, text: str, timestamp: Optional[str] = None,
                   speakers: Optional[list] = None) -> None:
-        """Ingest one context chunk. `speakers`, if given, lists the known entity
-        names in this stream (e.g. dialogue participants); extracted entities are
-        snapped to them so the same person is not split across name variants."""
+        """Ingest one context chunk as ONE episode. Pipeline:
+        L1 clean the raw chunk into subject-bound facts, then L2 extract slot-level
+        observations from those facts (entity anchored to each fact's subject), then
+        L3 ingest. `speakers` lists known participant names to anchor subjects to."""
         self._episode_counter += 1
         episode_id = f"ep{self._episode_counter}"
         t = timestamp or episode_id
         known = speakers or list(self._graph.entities.keys())
 
-        state = self._schema_state()
-        hint = f"KNOWN ENTITIES (reuse these exact names): {known}\n" if known else ""
-        state_json = json.dumps(state, ensure_ascii=False)
-        user = (f"{hint}CURRENT SCHEMA (nested entity -> slot -> belief + open candidate keys):\n"
-                f"{state_json}\n\nNEW MESSAGE:\n{text}\n\nJSON:")
-        parsed = _extract_json(self._chat(EXTRACT_SYS, user, max_tokens=500))
+        facts = self._clean_to_facts(text, known)
+        if not facts:
+            return
 
+        # L2: extract observations from the cleaned facts. Each fact carries its
+        # subject, so entity attribution comes from L1 (not guessed at L2). We pass
+        # the facts as a subject-labelled list and the current schema for slot reuse.
+        state_json = json.dumps(self._schema_state(), ensure_ascii=False)
+        facts_block = "\n".join(f"- [{f['subject']}] {f['text']}" for f in facts)
+        hint = f"KNOWN ENTITIES (reuse these exact names): {known}\n" if known else ""
+        user = (f"{hint}CURRENT SCHEMA (nested entity -> slot -> belief + open candidate keys):\n"
+                f"{state_json}\n\nFACTS (each prefixed with its subject entity in brackets — use "
+                f"that exact entity):\n{facts_block}\n\nJSON:")
+        parsed = _extract_json(self._chat(EXTRACT_SYS, user, max_tokens=600))
+
+        # map each assertion back to a source fact for provenance
         for a in parsed.get("assertions", []):
             slot = a.get("slot")
             value = a.get("value")
             if not slot or value in (None, "", "null"):   # skip empty / null-value assertions
                 continue
             entity = self._clean_entity(a.get("entity"), known=known)
+            src = next((f["text"] for f in facts if f["subject"] == entity), facts[0]["text"])
             obs = Observation(
                 entity=entity, slot=str(slot), value=str(value),
                 pred_error=float(a.get("pred_error", 0.0)), episode_id=episode_id, t=t,
-                candidate_id=a.get("candidate_id"), source_fact=text,
+                candidate_id=a.get("candidate_id"), source_fact=src,
             )
             self._graph.ingest(obs)
 

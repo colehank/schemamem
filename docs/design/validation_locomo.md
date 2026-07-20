@@ -42,22 +42,37 @@ Fixes (see `schema_memory.py`, `prompts.py`):
 After the fix the same conversation yields exactly two entities (Caroline, Melanie) with
 coherent slots.
 
-## Still rough (honest, open)
+## Still rough (honest, open) — L2-only run
 
-- **Speaker attribution leaks across turns.** One `support_system: husband and kids`
-  landed on Caroline though it is Melanie's — when a conflicting observation is
-  mis-attributed, it can overwrite the wrong entity's belief. Extraction is per-chunk and
-  does not hard-bind a value to its speaker. Candidate for a stricter L1/L2 attribution step.
-- **Slots still over-fragment.** `art_expression / art_impact / art_theme / art_belief`
-  should arguably be one `art` slot. The "keep slots coarse" instruction helps but does not
-  fully solve it; embedding-based slot canonicalization is a candidate.
+- **Speaker attribution is fragile.** Extraction was per-chunk and did not hard-bind a value
+  to its speaker, so a value could in principle be assigned to the wrong entity. (An earlier
+  draft of this note gave a specific mis-attribution example that did not match the saved
+  snapshot — retracted; in `examples/outputs/locomo_sample0_schema.json`, `husband and kids`
+  is correctly under Melanie.) This motivated the L1 stage below.
+- **Slots over-fragment.** `art_expression / art_impact / art_theme / art_belief` should
+  arguably be one `art` slot.
 - **Some "evolutions" are re-phrasings, not real change** (e.g. `support_group_experience`
-  restating "felt accepted"). The rewriter treats a corroborated candidate as a new belief
-  even when it is a paraphrase; distinguishing paraphrase from genuine change is open.
+  restating "felt accepted"). Distinguishing paraphrase from genuine change is open.
+
+## Update — after adding the L1 cleaning stage
+
+`add_chunk` now runs a two-stage pipeline: **L1** rewrites the raw chunk into subject-bound
+self-contained facts (references resolved, speaker bound, filler dropped), then **L2** extracts
+slot observations from those facts with the entity anchored to each fact's subject. Re-running
+the same conversation:
+
+- Slots collapsed from 18/7 (Caroline/Melanie) to **6/6** — much less fragmentation, each slot
+  now backed by 3–4 observations.
+- Attribution is bound at L1: Melanie's painting/family facts stay on Melanie, Caroline's
+  support-group/career facts stay on Caroline; no cross-entity bleed observed in this run.
+- Cost: one extra LLM call per chunk (L1). Runtime for the 19-session conversation ~4 min.
+
+Still open after L1: slot granularity (painting_experience / _significance / _as_expression /
+_as_relaxation could be one `painting` slot), and paraphrase-vs-change in the rewriter.
 
 ## Takeaway
 
-The mechanism does the intended thing on real data (change vs exception, dated supersede
-trail), and real data was necessary to expose the entity-explosion bug and the still-open
-attribution / fragmentation / paraphrase issues. These are method boundaries to address
-before the full benchmark run, not demo artifacts.
+The mechanism does the intended thing on real data (change vs exception, dated supersede trail),
+and real data was necessary to (a) expose and fix the entity-explosion bug, and (b) motivate the
+L1 cleaning stage that fixed attribution and cut slot fragmentation. Remaining boundaries — slot
+granularity and paraphrase-vs-change — are for the next iteration, not demo artifacts.

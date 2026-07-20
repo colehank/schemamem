@@ -17,6 +17,13 @@ class _Chat:
 
     def create(self, **kw):
         sysmsg = kw["messages"][0]["content"]
+        if sysmsg.startswith("You are the L1 cleaning stage"):
+            # L1: echo the raw dialogue as a single user-subject fact so the
+            # existing per-message scripts map 1:1 to L2 extraction calls.
+            raw = kw["messages"][-1]["content"].split("RAW DIALOGUE (one episode):\n", 1)[-1]
+            raw = raw.rsplit("\n\nJSON:", 1)[0].strip()
+            import json as _j
+            return _Resp(_j.dumps({"facts": [{"subject": "user", "text": raw}]}))
         if sysmsg.startswith("A user's belief"):
             return _Resp("pescatarian")
         if sysmsg.startswith("Answer the question"):
@@ -35,7 +42,7 @@ SCRIPTS = [
     '{"assertions":[{"entity":"user","slot":"diet","value":"ate meat","pred_error":1.0,"candidate_id":"meat"}]}',
     '{"assertions":[{"entity":"user","slot":"diet","value":"pescatarian","pred_error":1.0,"candidate_id":"fish"}]}',
     '{"assertions":[{"entity":"user","slot":"diet","value":"pescatarian","pred_error":1.0,"candidate_id":"fish"}]}',
-    '{"assertions":[{"entity":"user","slot":"diet","value":"pescatarian","pred_error":0.5,"candidate_id":"fish"}]}',
+    '{"assertions":[{"entity":"user","slot":"diet","value":"pescatarian","pred_error":1.0,"candidate_id":"fish"}]}',
     '{"assertions":[{"entity":"user","slot":"location","value":"Beijing","pred_error":0.0,"candidate_id":null}]}',
 ]
 MSGS = [

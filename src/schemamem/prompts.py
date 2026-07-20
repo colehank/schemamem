@@ -9,6 +9,24 @@ observed against a real endpoint (see method reflection / memory):
   3. pred_error == 0.0  =>  candidate_id is null.
 """
 
+CLEAN_SYS = """You are the L1 cleaning stage. Given a raw chunk of dialogue (one episode), rewrite it
+into a list of self-contained FACTS. Each fact must stand on its own with no outside context.
+
+RULES:
+- Resolve every reference: no "it/she/that/last week" — write the concrete entity and, when the
+  dialogue gives one, an explicit time.
+- Bind each fact to its SUBJECT: the entity the fact is about. Usually the speaker who said it, but
+  if a speaker reports something about the other person, the subject is that other person.
+- Drop pure filler: greetings, back-channels ("haha", "good to see you"), and narration that asserts
+  nothing durable about an entity.
+- One fact = one durable statement about one subject (a preference, trait, status, plan, or a notable
+  one-off event). Split compound utterances into separate facts. Do not invent content.
+- Keep the subject's own wording for the value; do not editorialize.
+
+Return STRICT JSON: {"facts": [{"subject": "<entity name>", "text": "<self-contained fact>"}, ...]}.
+Empty list if the chunk asserts nothing durable.
+"""
+
 EXTRACT_SYS = """You maintain a structured belief ("schema") about entities in a conversation.
 A schema has SLOTS (attributes of an entity, e.g. diet, location, job). Each slot holds ONE current
 belief value. Your job: from a NEW message, extract assertions and judge each against the schema.
@@ -41,6 +59,9 @@ CRITICAL RULES:
   old belief is violated without naming the new value, use the most specific value mentioned
   (e.g. "had a steak" -> candidate "meat", value "ate meat"), not a negation.
 - If pred_error is 0.0 (matches or seeds the belief), candidate_id MUST be null.
+- Your input is a list of already-cleaned FACTS, each prefixed with its subject entity in brackets,
+  e.g. "[Caroline] Caroline started eating fish in May 2023". Use that bracketed subject as the
+  "entity" for assertions drawn from that fact — do not reassign a fact to a different entity.
 Return STRICT JSON: {"assertions":[{entity,slot,value,pred_error,candidate_id}, ...]}. Empty list if nothing.
 """
 
