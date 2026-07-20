@@ -15,3 +15,6 @@ dist/
 # local state
 *.log
 schemamem_state/
+
+# claude harness staging (local only)
+.harness_stage/
