@@ -129,6 +129,42 @@ def test_epsilon_dissolve_releases_redundant_but_not_seed():
     assert s.ledger[0].forgettable is False and s.ledger[1].forgettable is True
 
 
+def test_slot_merge_routes_near_duplicate_into_existing_slot():
+    """(a) With a similarity fn, a near-duplicate slot name is merged into the
+    existing slot rather than minting a new one."""
+    # descriptors are "name: value"; treat any two art/painting descriptors as close
+    def sim(a, b):
+        art = lambda s: ("art" in s or "paint" in s or "draw" in s)
+        return 1.0 if a == b else (0.8 if art(a) and art(b) else 0.0)
+    g2 = SchemaGraph(k=2, similarity=sim, slot_merge_threshold=0.6)
+    o1 = Observation(entity="u", slot="artwork", value="painting", pred_error=0.0,
+                     episode_id="ep1", t="t1", candidate_id=None)
+    o2 = Observation(entity="u", slot="artistic expression", value="drawing", pred_error=0.0,
+                     episode_id="ep2", t="t2", candidate_id=None)
+    g2.ingest(o1); g2.ingest(o2)
+    slots = g2.get_schema("u").slots
+    assert list(slots.keys()) == ["artwork"], slots.keys()   # merged, not two slots
+    assert len(slots["artwork"].ledger) == 2
+
+
+def test_paraphrase_guard_reinforces_instead_of_superseding():
+    """(b) A corroborated candidate whose value paraphrases the belief reinforces
+    it (ASSIMILATE) rather than superseding it (no false evolution)."""
+    def sim(a, b):
+        return 1.0 if {a, b} == {"feels accepted", "felt accepted"} or a == b else 0.0
+    g = SchemaGraph(k=2, similarity=sim, paraphrase_threshold=0.9)
+    g.ingest(Observation(entity="u", slot="emotion", value="felt accepted", pred_error=0.0,
+                         episode_id="ep1", t="t1", candidate_id=None))          # seed
+    g.ingest(Observation(entity="u", slot="emotion", value="feels accepted", pred_error=1.0,
+                         episode_id="ep2", t="t2", candidate_id="accept"))       # candidate vote1
+    act = g.ingest(Observation(entity="u", slot="emotion", value="feels accepted", pred_error=1.0,
+                               episode_id="ep3", t="t3", candidate_id="accept"))  # vote2 -> would accommodate
+    s = g.get_schema("u").slots["emotion"]
+    assert act == Action.ASSIMILATE, act
+    assert s.superseded == [], s.superseded      # belief NOT superseded by a paraphrase
+    assert s.belief == "felt accepted"
+
+
 def test_empty_slot_seeds_even_with_candidate_id():
     """A first observation on an empty slot must seed the belief even if the
     extractor attached a candidate_id (regression: such obs used to fall through

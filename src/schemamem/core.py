@@ -111,7 +111,12 @@ class SchemaGraph:
 
     def __init__(self, k: int = 2, rewriter: Callable = _default_rewriter,
                  online_decay: bool = False, decay_window: int = 3,
-                 epsilon: Optional[float] = None):
+                 epsilon: Optional[float] = None,
+                 similarity: Optional[Callable] = None,
+                 slot_merge: bool = True,
+                 paraphrase_guard: bool = True,
+                 slot_merge_threshold: float = 0.66,
+                 paraphrase_threshold: float = 0.90):
         """
         k             : distinct independent episodes to trigger accommodation.
         online_decay  : if True, a stalled candidate (<k votes) is flushed to an
@@ -124,12 +129,26 @@ class SchemaGraph:
                         reconstructable from the schema; its raw text is released
                         (Observation.forgettable=True, slot.forgotten += 1) and
                         ingest() returns DISSOLVE. None disables forgetting.
+        similarity    : optional callable (a: str, b: str) -> float in [0,1]. When
+                        provided it powers two guards: (i) SLOT CANONICALIZATION —
+                        a would-be-new slot whose name is near an existing slot of
+                        the same entity is merged into it; (ii) PARAPHRASE guard — a
+                        candidate about to accommodate whose value is near the current
+                        belief is treated as reinforcement (ASSIMILATE), not a change.
+                        None disables both guards (pure structural behaviour).
+        slot_merge_threshold : cosine >= this merges a new slot into an existing one.
+        paraphrase_threshold : cosine >= this treats an accommodation as a paraphrase.
         """
         self.k = k
         self.rewriter = rewriter
         self.online_decay = online_decay
         self.decay_window = decay_window
         self.epsilon = epsilon
+        self.similarity = similarity
+        self.slot_merge = slot_merge
+        self.paraphrase_guard = paraphrase_guard
+        self.slot_merge_threshold = slot_merge_threshold
+        self.paraphrase_threshold = paraphrase_threshold
         self._episode_order: dict = {}                   # episode_id -> monotonic idx
         self.entities: dict = {}                         # entity -> Schema
 
@@ -156,9 +175,38 @@ class SchemaGraph:
                 del slot.candidates[cid]
         return protected
 
+    @staticmethod
+    def _slot_descriptor(name: str, value) -> str:
+        """A short text signal for a slot: its name plus a representative value.
+        The value carries most of the semantic signal (abstract names like
+        'relaxation_method' and 'artwork' look far apart, but their values are both
+        'painting')."""
+        name = name.replace("_", " ")
+        return f"{name}: {value}" if value else name
+
+    def _canonical_slot_name(self, schema: "Schema", name: str, value) -> str:
+        """(a) Slot canonicalization: if `name` is not an existing slot but is close
+        (by similarity, comparing name+value descriptors) to one that already exists
+        on this entity, return that existing slot's name so the observation lands
+        there instead of minting a near-duplicate slot. No-op when similarity is
+        disabled or the slot already exists."""
+        if (self.similarity is None or not self.slot_merge
+                or name in schema.slots or not schema.slots):
+            return name
+        incoming = self._slot_descriptor(name, value)
+        best, best_sim = name, 0.0
+        for existing, slot in schema.slots.items():
+            ref = self._slot_descriptor(existing, slot.belief)
+            sim = self.similarity(incoming, ref)
+            if sim > best_sim:
+                best, best_sim = existing, sim
+        return best if best_sim >= self.slot_merge_threshold else name
+
     def ingest(self, obs: Observation) -> Action:
         """Route one observation and mutate the slot. Returns the action taken."""
-        slot = self.get_schema(obs.entity).get_slot(obs.slot)
+        schema = self.get_schema(obs.entity)
+        obs.slot = self._canonical_slot_name(schema, obs.slot, obs.value)
+        slot = schema.get_slot(obs.slot)
         slot.ledger.append(obs)
         idx = self._episode_idx(obs.episode_id)
 
@@ -197,6 +245,15 @@ class SchemaGraph:
 
         # (3) enough independent corroboration -> ACCOMMODATE
         if len(cand.votes) >= self.k:
+            # (b) Paraphrase guard: a corroborated candidate whose value merely
+            #     restates the current belief is reinforcement, not a real change.
+            #     Reinforce (mark the line won, keep the belief) instead of
+            #     superseding, so paraphrases don't manufacture a false evolution.
+            if (self.similarity is not None and self.paraphrase_guard and slot.belief is not None
+                    and self.similarity(obs.value, slot.belief) >= self.paraphrase_threshold):
+                slot.won_lines.add(obs.candidate_id)
+                del slot.candidates[obs.candidate_id]
+                return Action.ASSIMILATE
             if slot.belief is not None:
                 slot.superseded.append((slot.belief, obs.t))
             slot.belief = self.rewriter(slot.belief, cand)

@@ -89,6 +89,10 @@ class SchemaMemorySystem:
         online_decay: bool = False,
         decay_window: int = 3,
         enable_forgetting: bool = False,
+        enable_slot_merge: bool = False,     # ablation: embedding slot canonicalization
+        enable_paraphrase_guard: bool = True,
+        slot_merge_threshold: float = 0.66,
+        paraphrase_threshold: float = 0.90,
         state_path: Optional[str] = None,
         client=None,
     ):
@@ -100,6 +104,9 @@ class SchemaMemorySystem:
         self.online_decay = bool(online_decay)
         self.decay_window = int(decay_window)
         self.enable_forgetting = bool(enable_forgetting)
+        self.enable_slot_merge = bool(enable_slot_merge)
+        self.embedding_model = embedding_model
+        self._emb_cache: dict = {}
         self.state_path = state_path
 
         # LLM client (OpenAI-compatible). Injected in tests; otherwise built from
@@ -125,6 +132,12 @@ class SchemaMemorySystem:
             k=self.min_evidence_count, rewriter=self._rewrite_belief,
             online_decay=self.online_decay, decay_window=self.decay_window,
             epsilon=self.reconstruction_tolerance if self.enable_forgetting else None,
+            similarity=(self._similarity
+                        if (self.enable_slot_merge or enable_paraphrase_guard) else None),
+            slot_merge=self.enable_slot_merge,
+            paraphrase_guard=bool(enable_paraphrase_guard),
+            slot_merge_threshold=slot_merge_threshold,
+            paraphrase_threshold=paraphrase_threshold,
         )
 
         # running schema-state view fed back into the extraction prompt so the LLM
@@ -139,6 +152,36 @@ class SchemaMemorySystem:
             temperature=temperature, max_tokens=max_tokens,
         )
         return r.choices[0].message.content or ""
+
+    def _embed(self, text: str):
+        """Embed one string via the OpenAI-compatible embeddings endpoint, cached.
+        Returns None if the client has no embeddings support (e.g. a scripted mock),
+        so callers degrade to purely structural behaviour."""
+        text = (text or "").strip().lower()
+        if text in self._emb_cache:
+            return self._emb_cache[text]
+        try:
+            r = self._client.embeddings.create(model=self.embedding_model, input=text)
+            vec = r.data[0].embedding
+        except Exception:
+            vec = None
+        self._emb_cache[text] = vec
+        return vec
+
+    def _similarity(self, a: str, b: str) -> float:
+        """Cosine similarity in [0,1] between two short strings. 0.0 when embeddings
+        are unavailable (guards then no-op, preserving pure structural behaviour)."""
+        if a == b:
+            return 1.0
+        va, vb = self._embed(a), self._embed(b)
+        if va is None or vb is None:
+            return 0.0
+        dot = sum(x * y for x, y in zip(va, vb))
+        na = sum(x * x for x in va) ** 0.5
+        nb = sum(y * y for y in vb) ** 0.5
+        if na == 0 or nb == 0:
+            return 0.0
+        return max(0.0, dot / (na * nb))
 
     def _rewrite_belief(self, old_belief, candidate) -> str:
         obs_lines = "\n".join(f"- {o.value} ({o.t})" for o in candidate.observations)
