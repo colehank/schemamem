@@ -78,6 +78,11 @@ CRITICAL:
   completing seven short stories!"). The confirmed value is a fact about the user.
 - A value about a THIRD PARTY the user mentions ("my friend Rachel moved to the suburbs") is a fact
   whose subject is that third party.
+- Capture values stated in RECALL or QUESTION form, not just fresh declarations. A number wrapped in
+  "remember when I got pre-approved for $400,000?", "as I mentioned, I now have four bikes", or
+  "you know my 25:50 5K time" still asserts the value — extract it ("The user was pre-approved for
+  $400,000"). People restate a changed number casually, and that restatement is often the update, so
+  never skip a number just because it appears in a reminiscing or rhetorical sentence.
 - Write each as a self-contained sentence carrying the explicit value (resolve all references).
 - Only quantifiable/comparable state. If the episode has none, return an empty list.
 Return STRICT JSON: {"facts": [{"subject": "<entity>", "text": "<fact with the explicit value>"}, ...]}.
@@ -98,6 +103,13 @@ CRITICAL RULES:
   "hobby", "hobby_effect", "hobby_reason"). Do not create near-duplicate slots.
 - Only emit an assertion for a durable attribute/belief about an entity (a preference, trait, status,
   plan). Skip one-off pleasantries and narration that do not update a belief.
+- A QUANTIFIABLE STATE is ALWAYS a durable slot, even when the sentence sounds like a passing remark:
+  a running COUNT ("tried four Korean restaurants" -> slot=korean_restaurants_tried, value="four";
+  "written seven short stories" -> slot=short_stories_written, value="seven"), an AMOUNT
+  ("pre-approved for $400,000" -> slot=loan_preapproval_amount), a FREQUENCY ("yoga three times a
+  week"), a PROGRESS value ("on page 220"). The number IS the belief — it is exactly what will change
+  later. Name the slot after the thing being counted/measured, and put the value (the number) in the
+  value field. Never drop a counted/measured value as "one-off narration".
 - Do NOT decompose a single belief into its parts. "I'm a strict vegetarian (no meat, eggs, dairy)"
   is ONE assertion: slot=diet, value="strict vegetarian". The no-meat/eggs/dairy are its DEFINITION,
   not separate violating values.
