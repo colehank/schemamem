@@ -129,6 +129,18 @@ def test_epsilon_dissolve_releases_redundant_but_not_seed():
     assert s.ledger[0].forgettable is False and s.ledger[1].forgettable is True
 
 
+def test_empty_slot_seeds_even_with_candidate_id():
+    """A first observation on an empty slot must seed the belief even if the
+    extractor attached a candidate_id (regression: such obs used to fall through
+    to the violation path and leave belief=None)."""
+    g = SchemaGraph(k=2)
+    act = g.ingest(_obs("plays guitar", 0.0, "ep1", "t1", "guitar"))
+    s = g.get_schema("user").get_slot("diet")
+    assert act == Action.ASSIMILATE
+    assert s.belief == "plays guitar"
+    assert "guitar" in s.won_lines
+
+
 def test_epsilon_none_never_dissolves():
     g = SchemaGraph(k=2, epsilon=None)   # forgetting disabled
     acts = [g.ingest(o) for o in [

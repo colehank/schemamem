@@ -100,6 +100,10 @@ print(context)
 answer = mem.ask_with_retrieved_context("What does the user eat now?", context)
 ```
 
+For many chunks, use `mem.add_chunks(chunks, speakers=[...])` — it runs the stateless L1
+cleaning stage concurrently across chunks (LLM calls are I/O-bound) while keeping L2/L3
+sequential in order, so episode ordering and the cross-episode change count are preserved.
+
 For the offline, no-API-key path, pass a scripted `client=` (see `examples/diet_dialogue.py`).
 
 ### Optional modes (ablations, off by default)

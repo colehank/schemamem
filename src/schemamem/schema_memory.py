@@ -29,14 +29,46 @@ except ImportError:                     # flat import in dev
     from prompts import CLEAN_SYS, EXTRACT_SYS, REWRITE_SYS, ANSWER_SYS
 
 
-def _extract_json(text: str) -> dict:
-    m = re.search(r"\{.*\}", text, re.S)
-    if not m:
-        return {"assertions": []}
+def _extract_json(text: str, key: str = "assertions") -> dict:
+    """Parse a JSON object from an LLM reply, tolerating truncation.
+
+    On a clean parse, return it. If the reply was cut off mid-array (common when
+    max_tokens is hit), salvage every COMPLETE {...} object inside the first array
+    under `key` rather than silently dropping the whole reply."""
+    start = text.find("{")
+    if start == -1:
+        return {}
     try:
-        return json.loads(m.group(0))
+        return json.loads(text[start:text.rfind("}") + 1])
     except json.JSONDecodeError:
-        return {"assertions": []}
+        pass
+    # recovery: pull complete top-level objects out of the (possibly truncated) list
+    objs, depth, buf, in_str, esc = [], 0, [], False, False
+    for ch in text[start + 1:]:
+        if in_str:
+            buf.append(ch)
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True; buf.append(ch)
+        elif ch == "{":
+            depth += 1; buf.append(ch)
+        elif ch == "}":
+            depth -= 1; buf.append(ch)
+            if depth == 0:
+                try:
+                    objs.append(json.loads("".join(buf)))
+                except json.JSONDecodeError:
+                    pass
+                buf = []
+        elif depth > 0:
+            buf.append(ch)
+    return {key: objs}
 
 
 class SchemaMemorySystem:
@@ -149,7 +181,7 @@ class SchemaMemorySystem:
         facts. Returns [{"subject": <entity>, "text": <fact>}, ...]."""
         hint = f"PARTICIPANTS (use these exact names as subjects): {known}\n" if known else ""
         user = f"{hint}RAW DIALOGUE (one episode):\n{text}\n\nJSON:"
-        parsed = _extract_json(self._chat(CLEAN_SYS, user, max_tokens=800))
+        parsed = _extract_json(self._chat(CLEAN_SYS, user, max_tokens=1200), key="facts")
         facts = []
         for f in parsed.get("facts", []):
             ftext = (f.get("text") or "").strip()
@@ -159,47 +191,88 @@ class SchemaMemorySystem:
             facts.append({"subject": subject, "text": ftext})
         return facts
 
-    # ---- WRITE: L1 clean -> L2 extract -> L3 ingest ------------------------
-    def add_chunk(self, text: str, timestamp: Optional[str] = None,
-                  speakers: Optional[list] = None) -> None:
-        """Ingest one context chunk as ONE episode. Pipeline:
-        L1 clean the raw chunk into subject-bound facts, then L2 extract slot-level
-        observations from those facts (entity anchored to each fact's subject), then
-        L3 ingest. `speakers` lists known participant names to anchor subjects to."""
-        self._episode_counter += 1
-        episode_id = f"ep{self._episode_counter}"
-        t = timestamp or episode_id
-        known = speakers or list(self._graph.entities.keys())
+    @staticmethod
+    def _coerce_str(v):
+        """Flatten a value the LLM may have returned as a nested object into a
+        plain string (e.g. {'belief': 'x'} -> 'x')."""
+        if isinstance(v, dict):
+            for k in ("belief", "value", "text", "name"):
+                if isinstance(v.get(k), str):
+                    return v[k].strip()
+            strs = [str(x) for x in v.values() if isinstance(x, (str, int, float))]
+            return strs[0].strip() if strs else ""
+        if isinstance(v, list):
+            return ", ".join(SchemaMemorySystem._coerce_str(x) for x in v)
+        return str(v).strip()
 
-        facts = self._clean_to_facts(text, known)
+    # ---- L2: cleaned facts -> slot observations -> L3 ingest ---------------
+    def _ingest_facts(self, facts: list, episode_id: str, t: str, known: list) -> None:
+        """L2 + L3 for one episode's already-cleaned facts. Stateful (reads the
+        current schema for slot/candidate reuse and mutates it), so this runs
+        sequentially even when L1 is parallelized."""
         if not facts:
             return
-
-        # L2: extract observations from the cleaned facts. Each fact carries its
-        # subject, so entity attribution comes from L1 (not guessed at L2). We pass
-        # the facts as a subject-labelled list and the current schema for slot reuse.
         state_json = json.dumps(self._schema_state(), ensure_ascii=False)
         facts_block = "\n".join(f"- [{f['subject']}] {f['text']}" for f in facts)
         hint = f"KNOWN ENTITIES (reuse these exact names): {known}\n" if known else ""
         user = (f"{hint}CURRENT SCHEMA (nested entity -> slot -> belief + open candidate keys):\n"
                 f"{state_json}\n\nFACTS (each prefixed with its subject entity in brackets — use "
                 f"that exact entity):\n{facts_block}\n\nJSON:")
-        parsed = _extract_json(self._chat(EXTRACT_SYS, user, max_tokens=600))
+        parsed = _extract_json(self._chat(EXTRACT_SYS, user, max_tokens=1200), key="assertions")
 
-        # map each assertion back to a source fact for provenance
         for a in parsed.get("assertions", []):
             slot = a.get("slot")
-            value = a.get("value")
-            if not slot or value in (None, "", "null"):   # skip empty / null-value assertions
+            value = self._coerce_str(a.get("value"))
+            if not slot or value in ("", "null", "none", "None"):   # skip empty assertions
                 continue
             entity = self._clean_entity(a.get("entity"), known=known)
             src = next((f["text"] for f in facts if f["subject"] == entity), facts[0]["text"])
             obs = Observation(
-                entity=entity, slot=str(slot), value=str(value),
+                entity=entity, slot=str(slot), value=value,
                 pred_error=float(a.get("pred_error", 0.0)), episode_id=episode_id, t=t,
                 candidate_id=a.get("candidate_id"), source_fact=src,
             )
             self._graph.ingest(obs)
+
+    # ---- WRITE: L1 clean -> L2 extract -> L3 ingest ------------------------
+    def add_chunk(self, text: str, timestamp: Optional[str] = None,
+                  speakers: Optional[list] = None) -> None:
+        """Ingest one context chunk as ONE episode: L1 clean -> L2 extract -> L3.
+        For many chunks, prefer add_chunks() which parallelizes the L1 stage."""
+        self._episode_counter += 1
+        episode_id = f"ep{self._episode_counter}"
+        t = timestamp or episode_id
+        known = speakers or list(self._graph.entities.keys())
+        facts = self._clean_to_facts(text, known)
+        self._ingest_facts(facts, episode_id, t, known)
+
+    # ---- WRITE (batch): parallel L1, then sequential L2/L3 -----------------
+    def add_chunks(self, chunks: list, speakers: Optional[list] = None,
+                   max_workers: int = 8) -> None:
+        """Ingest many chunks as an ordered episode stream.
+
+        L1 cleaning is stateless per chunk, so it is run CONCURRENTLY across all
+        chunks (I/O-bound LLM calls). L2 extraction + L3 arbitration read and mutate
+        the shared schema, so they run SEQUENTIALLY in the original chunk order —
+        preserving episode ordering and the cross-episode k-count.
+
+        `chunks`: list of str, or list of (text, timestamp) tuples.
+        """
+        from concurrent.futures import ThreadPoolExecutor
+
+        norm = [(c if isinstance(c, (tuple, list)) else (c, None)) for c in chunks]
+        base_known = speakers or list(self._graph.entities.keys())
+
+        # Phase 1 — parallel L1 (stateless). speakers known up front; if none given,
+        # fall back to whatever entities already exist (empty on a fresh system).
+        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+            fact_lists = list(ex.map(lambda ct: self._clean_to_facts(ct[0], base_known), norm))
+
+        # Phase 2 — sequential L2/L3 in order.
+        for (text, ts), facts in zip(norm, fact_lists):
+            self._episode_counter += 1
+            episode_id = f"ep{self._episode_counter}"
+            self._ingest_facts(facts, episode_id, ts or episode_id, base_known)
 
     def finalize(self):
         """Flush stalled candidates to protected exceptions (stream-end sweep)."""

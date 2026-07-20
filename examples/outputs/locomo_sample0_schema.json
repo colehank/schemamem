@@ -1,124 +1,139 @@
 {
  "dataset": "LoCoMo sample_id=conv-26",
- "pipeline": "L1 clean -> L2 extract -> L3 arbitrate",
+ "pipeline": "L1 clean (parallel) -> L2 extract -> L3 arbitrate",
  "speakers": [
   "Caroline",
   "Melanie"
  ],
  "entities": {
   "Caroline": {
-   "support_group_experience": {
-    "belief": "powerful",
+   "experience": {
+    "belief": "attended LGBTQ support group",
     "belief_t": "1:56 pm on 8 May, 2023",
     "superseded": [],
     "exceptions": [
      {
-      "value": "not-so-great",
-      "t": "1:50 pm on 17 August, 2023"
-     }
-    ],
-    "n_obs": 4
-   },
-   "support_group_inspiration": {
-    "belief": "transgender stories",
-    "belief_t": "1:56 pm on 8 May, 2023",
-    "superseded": [],
-    "exceptions": [
-     {
-      "value": "community growth",
-      "t": "1:36 pm on 3 July, 2023"
+      "value": "attended LGBTQ conference",
+      "t": "4:33 pm on 12 July, 2023"
      }
     ],
     "n_obs": 3
    },
-   "support_group_effect": {
-    "belief": "feel accepted",
+   "emotion": {
+    "belief": "feels accepted",
     "belief_t": "1:56 pm on 8 May, 2023",
     "superseded": [],
-    "exceptions": [
-     {
-      "value": "feel like she belonged",
-      "t": "1:36 pm on 3 July, 2023"
-     }
-    ],
-    "n_obs": 4
+    "exceptions": [],
+    "n_obs": 3
    },
-   "education_plan": {
+   "plan": {
     "belief": "continue education",
     "belief_t": "1:56 pm on 8 May, 2023",
     "superseded": [],
-    "exceptions": [],
-    "n_obs": 3
+    "exceptions": [
+     {
+      "value": "organizing LGBTQ art show",
+      "t": "1:33 pm on 25 August, 2023"
+     }
+    ],
+    "n_obs": 5
    },
    "career_interest": {
-    "belief": "counseling or working in mental health",
+    "belief": "counseling or mental health",
     "belief_t": "1:56 pm on 8 May, 2023",
     "superseded": [],
     "exceptions": [],
     "n_obs": 3
    },
-   "desire_to_support_others": {
-    "belief": "support those with similar issues",
-    "belief_t": "1:56 pm on 8 May, 2023",
+   "treasure": {
+    "belief": "necklace",
+    "belief_t": "10:37 am on 27 June, 2023",
     "superseded": [],
     "exceptions": [],
-    "n_obs": 3
+    "n_obs": 1
+   },
+   "sentimental_value": {
+    "belief": "hand-painted bowl",
+    "belief_t": "10:37 am on 27 June, 2023",
+    "superseded": [],
+    "exceptions": [],
+    "n_obs": 1
+   },
+   "support": {
+    "belief": "values support from people who accept and support her",
+    "belief_t": "1:50 pm on 17 August, 2023",
+    "superseded": [],
+    "exceptions": [],
+    "n_obs": 2
+   },
+   "hobby": {
+    "belief": "painting",
+    "belief_t": "1:33 pm on 25 August, 2023",
+    "superseded": [],
+    "exceptions": [
+     {
+      "value": "playing acoustic guitar",
+      "t": "3:19 pm on 28 August, 2023"
+     }
+    ],
+    "n_obs": 2
+   },
+   "inspiration": {
+    "belief": "nature",
+    "belief_t": "1:33 pm on 25 August, 2023",
+    "superseded": [],
+    "exceptions": [],
+    "n_obs": 1
    }
   },
   "Melanie": {
-   "painting_experience": {
-    "belief": "painted a lake sunrise",
-    "belief_t": "1:56 pm on 8 May, 2023",
-    "superseded": [],
-    "exceptions": [
-     {
-      "value": "signed up for a pottery class",
-      "t": "1:36 pm on 3 July, 2023"
-     }
-    ],
-    "n_obs": 2
-   },
-   "painting_significance": {
-    "belief": "special to her",
-    "belief_t": "1:56 pm on 8 May, 2023",
-    "superseded": [],
-    "exceptions": [
-     {
-      "value": "huge part of her life",
-      "t": "1:36 pm on 3 July, 2023"
-     }
-    ],
-    "n_obs": 2
-   },
-   "painting_as_expression": {
-    "belief": "fun way to express feelings",
-    "belief_t": "1:56 pm on 8 May, 2023",
-    "superseded": [],
-    "exceptions": [
-     {
-      "value": "pottery is like therapy",
-      "t": "1:36 pm on 3 July, 2023"
-     }
-    ],
-    "n_obs": 2
-   },
-   "painting_as_relaxation": {
-    "belief": "great way to relax",
+   "art_experience": {
+    "belief": "painted lake sunrise",
     "belief_t": "1:56 pm on 8 May, 2023",
     "superseded": [],
     "exceptions": [],
     "n_obs": 2
    },
-   "activity_with_kids": {
-    "belief": "going swimming",
+   "art_significance": {
+    "belief": "holds special significance",
     "belief_t": "1:56 pm on 8 May, 2023",
     "superseded": [],
     "exceptions": [],
     "n_obs": 1
    },
-   "mental_health_importance": {
-    "belief": "important",
-    "belief_t": "4:33 pm on 12 July, 2023",
+   "hobby": {
+    "belief": "painting",
+    "belief_t": "1:56 pm on 8 May, 2023",
+    "superseded": [],
+    "exceptions": [
+     {
+      "value": "pottery",
+      "t": "1:50 pm on 17 August, 2023"
+     },
+     {
+      "value": "playing clarinet",
+      "t": "3:19 pm on 28 August, 2023"
+     }
+    ],
+    "n_obs": 3
+   },
+   "emotion": {
+    "belief": "express feelings",
+    "belief_t": "1:56 pm on 8 May, 2023",
+    "superseded": [],
+    "exceptions": [],
+    "n_obs": 4
+   },
+   "family_importance": {
+    "belief": "values family time",
+    "belief_t": "10:37 am on 27 June, 2023",
+    "superseded": [],
+    "exceptions": [],
+    "n_obs": 1
+   },
+   "plan": {
+    "belief": "create special memories together during a summer outing",
+    "belief_t": "1:50 pm on 17 August, 2023",
     "superseded": [],
     "exceptions": [],
     "n_obs": 1

@@ -12,19 +12,26 @@ observed against a real endpoint (see method reflection / memory):
 CLEAN_SYS = """You are the L1 cleaning stage. Given a raw chunk of dialogue (one episode), rewrite it
 into a list of self-contained FACTS. Each fact must stand on its own with no outside context.
 
+A fact is a statement about a DURABLE ATTRIBUTE of an entity — a preference, trait, relationship,
+status, plan, or an ongoing interest — NOT a play-by-play of everything that happened. Aim for a few
+high-value facts per episode, not one per sentence.
+
 RULES:
 - Resolve every reference: no "it/she/that/last week" — write the concrete entity and, when the
   dialogue gives one, an explicit time.
 - Bind each fact to its SUBJECT: the entity the fact is about. Usually the speaker who said it, but
   if a speaker reports something about the other person, the subject is that other person.
-- Drop pure filler: greetings, back-channels ("haha", "good to see you"), and narration that asserts
-  nothing durable about an entity.
-- One fact = one durable statement about one subject (a preference, trait, status, plan, or a notable
-  one-off event). Split compound utterances into separate facts. Do not invent content.
-- Keep the subject's own wording for the value; do not editorialize.
+- CONSOLIDATE, do not enumerate. If several utterances speak to the SAME attribute of the same
+  subject, emit ONE fact for that attribute, not one per utterance. E.g. many remarks about painting
+  a sunset, drawing flowers, and art bringing joy → one fact like "Caroline enjoys visual art
+  (painting, drawing) as a way to express her feelings", NOT five facts.
+- A notable one-off EVENT is worth a fact only if it reveals a durable attribute; otherwise drop it.
+  Do not create a separate fact for each object/activity mentioned in passing.
+- Drop pure filler: greetings, back-channels, and narration that asserts nothing durable.
+- Do not invent content; stay faithful to what the subject conveyed.
 
 Return STRICT JSON: {"facts": [{"subject": "<entity name>", "text": "<self-contained fact>"}, ...]}.
-Empty list if the chunk asserts nothing durable.
+Prefer FEWER, higher-level facts. Empty list if the chunk asserts nothing durable.
 """
 
 EXTRACT_SYS = """You maintain a structured belief ("schema") about entities in a conversation.

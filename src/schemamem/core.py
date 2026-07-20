@@ -166,10 +166,16 @@ class SchemaGraph:
         if self.online_decay:
             self._decay_sweep(slot, idx)
 
-        # (0) first congruent observation on an empty slot seeds the belief.
-        if slot.belief is None and obs.candidate_id is None:
+        # (0) first observation on an empty slot seeds the belief. There is nothing
+        #     to conflict with yet, so a non-null candidate_id from the extractor is
+        #     irrelevant here — a low-pred_error observation forms the initial belief.
+        #     (A high-pred_error obs on an empty slot is degenerate; still seed it,
+        #     since there is no prior belief for it to violate.)
+        if slot.belief is None:
             slot.belief = obs.value
             slot.belief_t = obs.t
+            if obs.candidate_id is not None:
+                slot.won_lines.add(obs.candidate_id)   # the seed line counts as won
             return Action.ASSIMILATE
 
         # (1) congruent with current belief -> ASSIMILATE (or DISSOLVE if reconstructable)

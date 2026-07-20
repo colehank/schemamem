@@ -54,25 +54,54 @@ coherent slots.
 - **Some "evolutions" are re-phrasings, not real change** (e.g. `support_group_experience`
   restating "felt accepted"). Distinguishing paraphrase from genuine change is open.
 
-## Update — after adding the L1 cleaning stage
+## Update — after adding the L1 cleaning stage (+ tightening + parallel L1)
 
 `add_chunk` now runs a two-stage pipeline: **L1** rewrites the raw chunk into subject-bound
 self-contained facts (references resolved, speaker bound, filler dropped), then **L2** extracts
-slot observations from those facts with the entity anchored to each fact's subject. Re-running
-the same conversation:
+slot observations from those facts with the entity anchored to each fact's subject. L1 was then
+tightened to emit attribute-level facts, not a play-by-play (one heavy session dropped from 37
+raw facts to 7 consolidated ones). Batch ingestion (`add_chunks`) runs the stateless L1 stage
+concurrently and keeps L2/L3 sequential.
 
-- Slots collapsed from 18/7 (Caroline/Melanie) to **6/6** — much less fragmentation, each slot
-  now backed by 3–4 observations.
-- Attribution is bound at L1: Melanie's painting/family facts stay on Melanie, Caroline's
-  support-group/career facts stay on Caroline; no cross-entity bleed observed in this run.
-- Cost: one extra LLM call per chunk (L1). Runtime for the 19-session conversation ~4 min.
+Attribution is the clear win: bound at L1, Melanie's painting/family facts stay on Melanie and
+Caroline's support-group/career facts stay on Caroline — no cross-entity bleed in these runs.
+Runtime for the 19-session conversation: ~132 s serial → ~81 s with parallel L1.
 
-Still open after L1: slot granularity (painting_experience / _significance / _as_expression /
-_as_relaxation could be one `painting` slot), and paraphrase-vs-change in the rewriter.
+Slot fragmentation improved but is **not** fully solved, and counts vary run to run (LLM
+nondeterminism — including whether a given evolution gets caught). The saved snapshot
+(`examples/outputs/locomo_sample0_schema.json`, after the seed fix below):
+
+- Caroline: 9 slots, observation counts `[1,1,1,2,2,3,3,3,5]`.
+- Melanie: 6 slots, observation counts `[1,1,1,2,3,4]`.
+
+Many slots still carry only 1–2 observations — merging is partial, not the uniform "3–4 per slot"
+an earlier draft of this note claimed (that was true only for Caroline; retracted). Earlier runs
+of the same conversation did catch belief changes (`support_system`, `parenting_plan`, `plan`
+accommodating), so evolution capture is real but run-dependent, not guaranteed every run.
+
+## Still open
+
+- **Slot granularity.** Related attributes still split (e.g. Melanie's `artwork` /
+  `artistic_expression` / `relaxation_method` are all about painting). L1 consolidation and the
+  L2 slot-reuse hint help but don't merge everything; embedding-based slot canonicalization is a
+  candidate.
+- **Paraphrase vs change** in the rewriter (unchanged from before).
+
+## Fixed this iteration
+
+- **`belief == None` slots (was 5, now 0).** An observation with `pred_error=0` but a non-null
+  `candidate_id` (the extractor naming a value while calling it non-conflicting) fell through the
+  seed path — the empty slot never formed a belief and the value ended up as a lone exception.
+  Fixed in `core.py`: the first observation on an empty slot now seeds the belief regardless of
+  `candidate_id` (there is nothing to conflict with yet); if it carried a candidate_id, that line
+  is recorded as won. Regression test `test_empty_slot_seeds_even_with_candidate_id`. This is a
+  pure-L3 fix and does not depend on the extractor obeying the "pred_error=0 ⇒ candidate_id null"
+  prompt rule.
 
 ## Takeaway
 
 The mechanism does the intended thing on real data (change vs exception, dated supersede trail),
-and real data was necessary to (a) expose and fix the entity-explosion bug, and (b) motivate the
-L1 cleaning stage that fixed attribution and cut slot fragmentation. Remaining boundaries — slot
-granularity and paraphrase-vs-change — are for the next iteration, not demo artifacts.
+and real data was necessary to expose and fix the entity-explosion bug and to motivate the L1
+cleaning stage, which fixed attribution and reduced (not eliminated) slot fragmentation. Open
+boundaries — residual slot granularity, `None`-belief slots, and paraphrase-vs-change — are for
+the next iteration.

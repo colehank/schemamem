@@ -36,9 +36,9 @@ def main():
     # model / api_base / api_key default to OPENAI_* env vars inside the system.
     mem = SchemaMemorySystem(model=args.model, min_evidence_count=args.k)
 
-    for k in sessions:
-        text = "\n".join(f"{t['speaker']}: {t['text']}" for t in conv[k])
-        mem.add_chunk(text, timestamp=conv.get(k + "_date_time", k), speakers=speakers)
+    chunks = [("\n".join(f"{t['speaker']}: {t['text']}" for t in conv[k]),
+               conv.get(k + "_date_time", k)) for k in sessions]
+    mem.add_chunks(chunks, speakers=speakers)   # parallel L1, sequential L2/L3
     mem.finalize()
 
     for entity, schema in mem._graph.entities.items():
