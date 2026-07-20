@@ -22,11 +22,11 @@ import re
 from typing import Optional
 
 try:                                    # package-relative when vendored
-    from .core import SchemaGraph, Observation, Action
-    from .prompts import CLEAN_SYS, EXTRACT_SYS, REWRITE_SYS, ANSWER_SYS, SLOT_MERGE_SYS
+    from .core import SchemaGraph, Observation, Action, _differ_in_quantity
+    from .prompts import CLEAN_SYS, QUANT_SYS, EXTRACT_SYS, REWRITE_SYS, ANSWER_SYS, SLOT_MERGE_SYS
 except ImportError:                     # flat import in dev
-    from core import SchemaGraph, Observation, Action
-    from prompts import CLEAN_SYS, EXTRACT_SYS, REWRITE_SYS, ANSWER_SYS, SLOT_MERGE_SYS
+    from core import SchemaGraph, Observation, Action, _differ_in_quantity
+    from prompts import CLEAN_SYS, QUANT_SYS, EXTRACT_SYS, REWRITE_SYS, ANSWER_SYS, SLOT_MERGE_SYS
 
 
 def _extract_json(text: str, key: str = "assertions") -> dict:
@@ -86,6 +86,7 @@ class SchemaMemorySystem:
         change_threshold: float = 0.5,
         reconstruction_tolerance: float = 0.15,
         min_evidence_count: int = 2,
+        l1_quant_samples: int = 3,
         online_decay: bool = False,
         decay_window: int = 3,
         enable_forgetting: bool = False,
@@ -102,6 +103,7 @@ class SchemaMemorySystem:
         self.change_threshold = float(change_threshold)
         self.reconstruction_tolerance = float(reconstruction_tolerance)
         self.min_evidence_count = int(min_evidence_count)
+        self.l1_quant_samples = int(l1_quant_samples)
         self.online_decay = bool(online_decay)
         self.decay_window = int(decay_window)
         self.enable_forgetting = bool(enable_forgetting)
@@ -248,14 +250,31 @@ class SchemaMemorySystem:
         facts. Returns [{"subject": <entity>, "text": <fact>}, ...]."""
         hint = f"PARTICIPANTS (use these exact names as subjects): {known}\n" if known else ""
         user = f"{hint}RAW DIALOGUE (one episode):\n{text}\n\nJSON:"
-        parsed = _extract_json(self._chat(CLEAN_SYS, user, max_tokens=1200), key="facts")
-        facts = []
-        for f in parsed.get("facts", []):
-            ftext = (f.get("text") or "").strip()
-            if not ftext:
-                continue
-            subject = self._clean_entity(f.get("subject"), known=known)
-            facts.append({"subject": subject, "text": ftext})
+        # Two orthogonal L1 passes: (a) topical/trait facts, (b) quantifiable STATE
+        # (counts/amounts/frequencies/durations/locations). A single pass lets the
+        # model's attention be captured by topical detail and drop the scalar value
+        # that is exactly what evolves and gets asked about. The quant pass targets
+        # those values explicitly; the two fact sets are merged (dedup) downstream.
+        facts, seen = [], set()
+        # (topical pass once) + (quant pass sampled N times, union). The quant value
+        # (a count/amount) is the flaky one: a single LLM call surfaces it only
+        # sometimes. Recall-union over a few short samples turns an unreliable single
+        # extraction into a stable one — recall of a durable value is monotone under
+        # union (a value seen in ANY sample is kept), and dedup keeps the set clean.
+        passes = [(CLEAN_SYS, 1200, 1)] + [(QUANT_SYS, 500, self.l1_quant_samples)]
+        for sys_prompt, mt, n in passes:
+            for _ in range(n):
+                parsed = _extract_json(self._chat(sys_prompt, user, max_tokens=mt), key="facts")
+                for f in parsed.get("facts", []):
+                    ftext = (f.get("text") or "").strip()
+                    if not ftext:
+                        continue
+                    key = ftext.lower()
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    subject = self._clean_entity(f.get("subject"), known=known)
+                    facts.append({"subject": subject, "text": ftext})
         return facts
 
     @staticmethod
@@ -285,7 +304,16 @@ class SchemaMemorySystem:
         user = (f"{hint}CURRENT SCHEMA (nested entity -> slot -> belief + open candidate keys):\n"
                 f"{state_json}\n\nFACTS (each prefixed with its subject entity in brackets — use "
                 f"that exact entity):\n{facts_block}\n\nJSON:")
-        parsed = _extract_json(self._chat(EXTRACT_SYS, user, max_tokens=1200), key="assertions")
+        # L2 is a network call; a transient empty/failed parse would silently drop
+        # this episode's contribution. Retry a couple of times before giving up.
+        parsed = {"assertions": []}
+        for _ in range(3):
+            try:
+                parsed = _extract_json(self._chat(EXTRACT_SYS, user, max_tokens=1200), key="assertions")
+            except Exception:
+                parsed = {"assertions": []}
+            if parsed.get("assertions"):
+                break
 
         for a in parsed.get("assertions", []):
             slot = a.get("slot")
@@ -293,11 +321,35 @@ class SchemaMemorySystem:
             if not slot or value in ("", "null", "none", "None"):   # skip empty assertions
                 continue
             entity = self._clean_entity(a.get("entity"), known=known)
-            src = next((f["text"] for f in facts if f["subject"] == entity), facts[0]["text"])
+            # Provenance: use the fact index the extractor tied this assertion to; fall back to
+            # the first fact whose subject matches the entity, then to the first fact.
+            idx = a.get("source_fact_index")
+            src = None
+            if isinstance(idx, int) and 0 <= idx < len(facts):
+                src = facts[idx]["text"]
+            if src is None:
+                src = next((f["text"] for f in facts if f["subject"] == entity), facts[0]["text"])
+            pe = float(a.get("pred_error", 0.0))
+            cand = a.get("candidate_id")
+            # Numeric override: on a slot that already holds a belief, a value carrying
+            # a DIFFERENT quantity (count/amount/page/frequency) is a genuine update, not
+            # a "partial" nuance — the LLM tends to mislabel a monotone change ("200→220
+            # pages") as r=0.5. Force it to a conflict so it can supersede. This is the
+            # same signal the paraphrase guard uses (quantity differs => not a paraphrase),
+            # applied at scoring time.
+            existing = self._graph.entities.get(entity)
+            belief = None
+            if existing is not None:
+                s_obj = existing.slots.get(str(slot))
+                belief = s_obj.belief if s_obj else None
+            if belief is not None and _differ_in_quantity(value, str(belief)):
+                pe = 1.0
+                if not cand:
+                    cand = value  # concrete positive value as the candidate key
             obs = Observation(
                 entity=entity, slot=str(slot), value=value,
-                pred_error=float(a.get("pred_error", 0.0)), episode_id=episode_id, t=t,
-                candidate_id=a.get("candidate_id"), source_fact=src,
+                pred_error=pe, episode_id=episode_id, t=t,
+                candidate_id=cand, source_fact=src,
             )
             self._graph.ingest(obs)
 
@@ -332,8 +384,19 @@ class SchemaMemorySystem:
 
         # Phase 1 — parallel L1 (stateless). speakers known up front; if none given,
         # fall back to whatever entities already exist (empty on a fresh system).
+        def _clean_with_retry(ct):
+            # L1 is a network call; a transient failure or empty parse would silently
+            # drop an entire episode. Retry a couple of times before giving up.
+            for _ in range(3):
+                try:
+                    facts = self._clean_to_facts(ct[0], base_known)
+                except Exception:
+                    facts = []
+                if facts:
+                    return facts
+            return []
         with ThreadPoolExecutor(max_workers=max_workers) as ex:
-            fact_lists = list(ex.map(lambda ct: self._clean_to_facts(ct[0], base_known), norm))
+            fact_lists = list(ex.map(_clean_with_retry, norm))
 
         # Phase 2 — sequential L2/L3 in order.
         for (text, ts), facts in zip(norm, fact_lists):
@@ -357,23 +420,70 @@ class SchemaMemorySystem:
                 lines.append(f"  {slot.name}: {o.value} (exception, {o.t})")
         return "\n".join(lines)
 
+    def _render_slot_dual(self, entity: str, slot) -> str:
+        """Dual-trace rendering of one slot: gist (belief + evolution) over
+        verbatim (time-anchored source facts). This is what the retriever hands
+        the answerer — the gist gives the current value, the verbatim ledger
+        gives the specific wording / time / count that a precise question needs."""
+        out = [f"[{entity}] {slot.name}:"]
+        if slot.belief is not None:
+            out.append(f"  current: {slot.belief}" + (f"  (as of {slot.belief_t})" if slot.belief_t else ""))
+        for old, when in slot.superseded:
+            out.append(f"  previously: {old}  (superseded {when})")
+        for o in slot.exceptions:
+            out.append(f"  exception: {o.value}  ({o.t})")
+        # verbatim layer: the original time-anchored facts behind this slot
+        if slot.ledger:
+            out.append("  evidence:")
+            for o in slot.ledger:
+                src = (o.source_fact or o.value or "").strip()
+                if src:
+                    out.append(f"    - ({o.t}) {src}")
+        return "\n".join(out)
+
     def retrieve_with_source_groups(self, query: str, k: Optional[int] = None):
         """Return (context_text, source_id_groups).
 
-        MVP: render every entity's schema (small in these benchmarks). Entities
-        with no schema contribute nothing -> for a query about an unseen entity
-        the context is empty and the harness answers from raw retrieval (the
-        design's pure-RAG fallback). source_id_groups groups the source facts
-        backing each rendered slot, for recall@k metrics.
+        Query-ranked dual-trace retrieval: score every slot by embedding
+        similarity between the query and the slot's descriptor (name + belief +
+        recent evidence), take the top-k, and render each in dual-trace form
+        (gist over verbatim). Falls back to rendering all slots when embeddings
+        are unavailable. source_id_groups groups the source facts backing each
+        rendered slot (rank order), for recall@k metrics.
         """
         self.finalize()
+        k = k or self.retrieve_k
+        # collect (entity, slot) pairs
+        pairs = [(sch.entity, slot) for sch in self._graph.entities.values()
+                 for slot in sch.slots.values()]
+        if not pairs:
+            return "", []
+
+        def descriptor(entity, slot):
+            parts = [slot.name.replace("_", " "), slot.belief or ""]
+            parts += [o.value for o in slot.ledger[-3:]]
+            return f"{entity} " + " ".join(str(p) for p in parts if p)
+
+        ranked = pairs
+        try:
+            qv = self._embed(query)
+            import math
+            def cos(a, b):
+                dot = sum(x * y for x, y in zip(a, b))
+                na = math.sqrt(sum(x * x for x in a)); nb = math.sqrt(sum(y * y for y in b))
+                return dot / (na * nb) if na and nb else 0.0
+            scored = [((e, s), cos(qv, self._embed(descriptor(e, s)))) for e, s in pairs]
+            scored.sort(key=lambda z: z[1], reverse=True)
+            ranked = [p for p, _ in scored[:k]]
+        except Exception:
+            ranked = pairs[:k]
+
         blocks, groups = [], []
-        for schema in self._graph.entities.values():
-            blocks.append(self._render_entity(schema))
-            for slot in schema.slots.values():
-                srcs = [o.source_fact for o in slot.ledger if o.source_fact]
-                if srcs:
-                    groups.append(srcs)
+        for entity, slot in ranked:
+            blocks.append(self._render_slot_dual(entity, slot))
+            srcs = [o.source_fact for o in slot.ledger if o.source_fact]
+            if srcs:
+                groups.append(srcs)
         return "\n".join(blocks), groups
 
     # ---- ANSWER ------------------------------------------------------------

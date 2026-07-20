@@ -25,6 +25,33 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional, Callable
+import re
+
+_NUM_WORDS = {
+    "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+    "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12,
+}
+
+
+def _quantities(text: str):
+    """Extract comparable numeric tokens (digits + spelled-out small numbers)
+    from a value string, for detecting count/amount changes that embedding
+    similarity misses ('four bikes' vs 'three bikes' cosine ~0.92)."""
+    s = text.lower()
+    nums = set(re.findall(r"\d+(?:[.,]\d+)?", s.replace(",", "")))
+    for w, n in _NUM_WORDS.items():
+        if re.search(rf"\b{w}\b", s):
+            nums.add(str(n))
+    return nums
+
+
+def _differ_in_quantity(a: str, b: str) -> bool:
+    """True if a and b carry different numeric content — then they are NOT
+    paraphrases even at high embedding similarity (a real count/amount change)."""
+    qa, qb = _quantities(a), _quantities(b)
+    if not qa and not qb:
+        return False
+    return qa != qb
 
 
 class Action(str, Enum):
@@ -276,7 +303,8 @@ class SchemaGraph:
             #     Reinforce (mark the line won, keep the belief) instead of
             #     superseding, so paraphrases don't manufacture a false evolution.
             if (self.similarity is not None and self.paraphrase_guard and slot.belief is not None
-                    and self.similarity(obs.value, slot.belief) >= self.paraphrase_threshold):
+                    and self.similarity(obs.value, slot.belief) >= self.paraphrase_threshold
+                    and not _differ_in_quantity(obs.value, slot.belief)):
                 slot.won_lines.add(obs.candidate_id)
                 del slot.candidates[obs.candidate_id]
                 return Action.ASSIMILATE

@@ -39,17 +39,48 @@ RULES:
   dialogue gives one, an explicit time.
 - Bind each fact to its SUBJECT: the entity the fact is about. Usually the speaker who said it, but
   if a speaker reports something about the other person, the subject is that other person.
+- The assistant's turns often RESTATE a fact about the user ("Congrats on completing seven short
+  stories!", "trying your fourth Korean restaurant"). Treat these as facts about the USER — mine them
+  too, do not skip a turn just because the assistant spoke it. The confirmed value is the fact.
+- Third parties count. If the user mentions someone else ("my friend Rachel just moved to the
+  suburbs"), emit a fact whose SUBJECT is that third party (Rachel), not the user.
 - CONSOLIDATE, do not enumerate. If several utterances speak to the SAME attribute of the same
   subject, emit ONE fact for that attribute, not one per utterance. E.g. many remarks about painting
   a sunset, drawing flowers, and art bringing joy → one fact like "Caroline enjoys visual art
   (painting, drawing) as a way to express her feelings", NOT five facts.
 - A notable one-off EVENT is worth a fact only if it reveals a durable attribute; otherwise drop it.
   Do not create a separate fact for each object/activity mentioned in passing.
+- ALWAYS keep QUANTIFIABLE / COMPARABLE state, even when it looks minor: a COUNT ("owns 4 bikes",
+  "has tried four Korean restaurants", "wrote seven short stories", "on page 220"), a FREQUENCY
+  ("yoga three times a week"), an AMOUNT ("pre-approved for $400,000"), a CURRENT LOCATION ("moved to
+  the suburbs"), a schedule DAY/TIME ("cocktail class on Friday"). These scalar attributes are exactly
+  what changes over time — capture the value as the fact (e.g. "The user currently owns four bikes"),
+  not the surrounding chatter. When a later episode restates such an attribute with a NEW value,
+  still emit it: the change is the point.
 - Drop pure filler: greetings, back-channels, and narration that asserts nothing durable.
 - Do not invent content; stay faithful to what the subject conveyed.
 
 Return STRICT JSON: {"facts": [{"subject": "<entity name>", "text": "<self-contained fact>"}, ...]}.
-Prefer FEWER, higher-level facts. Empty list if the chunk asserts nothing durable.
+Consolidate genuinely redundant chatter, but NEVER drop a concrete scalar value (a count, amount,
+frequency, location, day, page) to save space — those specific values are the whole point. Empty
+list only if the chunk asserts nothing durable.
+"""
+
+QUANT_SYS = """You extract QUANTIFIABLE STATE about entities from one episode of dialogue — the
+facts most likely to CHANGE over time and be asked about later. Look specifically for:
+  - counts ("owns 4 bikes", "tried four Korean restaurants", "written seven short stories"),
+  - amounts ("pre-approved for $400,000"),
+  - frequencies ("yoga three times a week"),
+  - durations / progress ("spent 10-12 hours", "on page 220", "writing for three months"),
+  - current locations / schedules ("moved to the suburbs", "class on Friday").
+CRITICAL:
+- Mine the ASSISTANT's turns too: they often confirm the user's number ("Congratulations on
+  completing seven short stories!"). The confirmed value is a fact about the user.
+- A value about a THIRD PARTY the user mentions ("my friend Rachel moved to the suburbs") is a fact
+  whose subject is that third party.
+- Write each as a self-contained sentence carrying the explicit value (resolve all references).
+- Only quantifiable/comparable state. If the episode has none, return an empty list.
+Return STRICT JSON: {"facts": [{"subject": "<entity>", "text": "<fact with the explicit value>"}, ...]}.
 """
 
 EXTRACT_SYS = """You maintain a structured belief ("schema") about entities in a conversation.
@@ -70,10 +101,15 @@ CRITICAL RULES:
 - Do NOT decompose a single belief into its parts. "I'm a strict vegetarian (no meat, eggs, dairy)"
   is ONE assertion: slot=diet, value="strict vegetarian". The no-meat/eggs/dairy are its DEFINITION,
   not separate violating values.
-- pred_error is a 3-class label mapped to a number: 0.0 if the value matches the slot's current
-  belief (consistent), 1.0 if it clearly contradicts it (conflict). If the message is irrelevant to
-  the slot, emit no assertion for it (the "irrelevant" class = drop, not a number). If the slot has
-  no belief yet, use 0.0 (it seeds the belief). Do NOT emit intermediate values like 0.5.
+- pred_error is a 3-valued label mapped to a number, scored against the slot's CURRENT belief:
+    * 0.0  = consistent: the value matches / re-affirms the current belief (or the slot has no
+             belief yet, so this seeds it).
+    * 0.5  = partial: related to the belief and neither a clean match nor a clear contradiction
+             (a nuance, elaboration, or partial shift). Recorded but does NOT drive a belief change.
+    * 1.0  = conflict: the value clearly contradicts / supersedes the current belief.
+  If the message is irrelevant to the slot, emit no assertion (the "irrelevant" class = drop).
+- source_fact_index: the 0-based index (into the FACTS list below) of the SINGLE fact this assertion
+  was drawn from. This ties the assertion to its exact evidence sentence — always set it correctly.
 - candidate_id: a SHORT stable key naming the underlying NEW value this assertion supports.
     * matches current belief -> null
     * expresses the SAME underlying new value as an existing open candidate -> REUSE that key
@@ -83,11 +119,18 @@ CRITICAL RULES:
   Bad: "not_vegetarian", "no_longer_X". Good: "meat", "fish", "keto". If a message only says the
   old belief is violated without naming the new value, use the most specific value mentioned
   (e.g. "had a steak" -> candidate "meat", value "ate meat"), not a negation.
-- If pred_error is 0.0 (matches or seeds the belief), candidate_id MUST be null.
+- candidate_id is ONLY for conflicts: if pred_error is 0.0 or 0.5, candidate_id MUST be null.
+  Only a 1.0 conflict names a candidate (the concrete positive new value).
 - Your input is a list of already-cleaned FACTS, each prefixed with its subject entity in brackets,
   e.g. "[Caroline] Caroline started eating fish in May 2023". Use that bracketed subject as the
   "entity" for assertions drawn from that fact — do not reassign a fact to a different entity.
-Return STRICT JSON: {"assertions":[{entity,slot,value,pred_error,candidate_id}, ...]}. Empty list if nothing.
+Return STRICT JSON. Each assertion is an object with EXACTLY these six keys — "slot" and "value" are
+literal key names, NOT the attribute itself (never write {"diet":"vegan"}; write
+{"slot":"diet","value":"vegan"}):
+{"assertions":[
+  {"entity":"Caroline","slot":"diet","value":"pescatarian","pred_error":1.0,"candidate_id":"fish","source_fact_index":2}
+]}
+Empty list if nothing.
 """
 
 # Accommodation: rewrite old belief + corroborated new evidence into a clean expectation.
@@ -98,8 +141,17 @@ eating fish -> "pescatarian"). Reply with ONLY the new value, no punctuation or 
 """
 
 # Query-time answering over rendered schema context.
-ANSWER_SYS = """Answer the question using only the provided memory context. The context lists, per
-attribute: the current belief, a superseded trail (older values with when they were replaced), and
-protected exceptions (isolated past events that did not change the belief). Prefer the current belief;
-use the superseded trail for "what did they used to..." questions and exceptions for one-off events.
-Be concise."""
+ANSWER_SYS = """Answer the question using only the provided memory context. Each attribute is shown
+in two layers:
+  - "current" = the authoritative present value (after any evolution). "previously" = older values
+    that have been SUPERSEDED. "exception" = an isolated past event that did NOT change the belief.
+  - "evidence" = the original time-anchored sentences behind the attribute. These include BOTH the
+    old and new wording, so an evidence line may state a value that is now out of date.
+RULES:
+- For a question about the CURRENT state ("how many... do I have now", "how often do I..."), the
+  answer is the "current" value. NEVER answer with a "previously"/superseded value or an older
+  "evidence" line when a "current" value is present — current always wins on conflict.
+- Use "evidence" only to recover a specific detail (an exact date, wording, or item) that the
+  current value does not spell out — never to override the current value.
+- Use "previously" only for explicitly past-tense questions ("what did I used to...").
+- Answer with the shortest phrase that directly answers the question. Be concise."""
