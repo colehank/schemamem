@@ -70,12 +70,22 @@ class SchemaMemorySystem:
         self.enable_forgetting = bool(enable_forgetting)
         self.state_path = state_path
 
-        # LLM client (OpenAI-compatible). Injected in tests; built from env args otherwise.
+        # LLM client (OpenAI-compatible). Injected in tests; otherwise built from
+        # explicit args, falling back to the standard OPENAI_* environment variables.
+        # base_url is normalized to end in /v1 (the OpenAI SDK posts to <base>/chat/
+        # completions, so a gateway root without /v1 silently 404s).
         if client is not None:
             self._client = client
         else:
+            import os
             from openai import OpenAI
-            self._client = OpenAI(api_key=api_key or "EMPTY", base_url=api_base)
+            key = api_key or os.environ.get("OPENAI_API_KEY") or "EMPTY"
+            base = api_base or os.environ.get("OPENAI_BASE_URL")
+            if base:
+                base = base.rstrip("/")
+                if not base.endswith("/v1"):
+                    base = base + "/v1"
+            self._client = OpenAI(api_key=key, base_url=base)
 
         # L3 graph with an LLM-backed belief rewriter (accommodation).
         # reconstruction_tolerance maps to core epsilon; forgetting is off unless enabled.
@@ -107,34 +117,58 @@ class SchemaMemorySystem:
 
     # ---- schema-state view for the extraction prompt -----------------------
     def _schema_state(self) -> dict:
+        # Nested {entity: {slot: {belief, candidates}}} so the model never sees a
+        # flat "entity.slot" key it might copy back into the entity field.
         state = {}
         for schema in self._graph.entities.values():
+            slots = {}
             for slot in schema.slots.values():
-                key = f"{schema.entity}.{slot.name}"
-                state[key] = {
+                slots[slot.name] = {
                     "belief": slot.belief,
                     "candidates": list(slot.candidates.keys()),
                 }
+            state[schema.entity] = slots
         return state
 
+    @staticmethod
+    def _clean_entity(raw, known=None):
+        """Normalize an entity name: a bare person/thing, never a compound
+        'Entity.slot' string (a failure mode when schema-state is fed back)."""
+        e = (raw or "user").strip()
+        if "." in e:                       # 'Caroline.adoption_goal' -> 'Caroline'
+            e = e.split(".", 1)[0].strip()
+        if known:                          # snap to a known speaker if one matches
+            for k in known:
+                if k.lower() == e.lower():
+                    return k
+        return e or "user"
+
     # ---- WRITE: L1 clean -> L2 extract -> L3 ingest ------------------------
-    def add_chunk(self, text: str, timestamp: Optional[str] = None) -> None:
+    def add_chunk(self, text: str, timestamp: Optional[str] = None,
+                  speakers: Optional[list] = None) -> None:
+        """Ingest one context chunk. `speakers`, if given, lists the known entity
+        names in this stream (e.g. dialogue participants); extracted entities are
+        snapped to them so the same person is not split across name variants."""
         self._episode_counter += 1
         episode_id = f"ep{self._episode_counter}"
         t = timestamp or episode_id
+        known = speakers or list(self._graph.entities.keys())
 
-        state_json = json.dumps(self._schema_state(), ensure_ascii=False)
-        user = (f"CURRENT SCHEMA (per 'entity.slot': belief + open candidate keys):\n{state_json}\n\n"
-                f"NEW MESSAGE:\n{text}\n\nJSON:")
-        parsed = _extract_json(self._chat(EXTRACT_SYS, user, max_tokens=400))
+        state = self._schema_state()
+        hint = f"KNOWN ENTITIES (reuse these exact names): {known}\n" if known else ""
+        state_json = json.dumps(state, ensure_ascii=False)
+        user = (f"{hint}CURRENT SCHEMA (nested entity -> slot -> belief + open candidate keys):\n"
+                f"{state_json}\n\nNEW MESSAGE:\n{text}\n\nJSON:")
+        parsed = _extract_json(self._chat(EXTRACT_SYS, user, max_tokens=500))
 
         for a in parsed.get("assertions", []):
-            entity = a.get("entity") or "user"
             slot = a.get("slot")
-            if not slot:
+            value = a.get("value")
+            if not slot or value in (None, "", "null"):   # skip empty / null-value assertions
                 continue
+            entity = self._clean_entity(a.get("entity"), known=known)
             obs = Observation(
-                entity=entity, slot=slot, value=a.get("value", ""),
+                entity=entity, slot=str(slot), value=str(value),
                 pred_error=float(a.get("pred_error", 0.0)), episode_id=episode_id, t=t,
                 candidate_id=a.get("candidate_id"), source_fact=text,
             )

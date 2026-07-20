@@ -57,6 +57,22 @@ uv run pytest           # run the test suite (core + system)
 uv run examples/diet_dialogue.py   # offline end-to-end demo (scripted LLM)
 ```
 
+## Configuration
+
+`SchemaMemorySystem` makes one LLM call per ingested chunk through an
+**OpenAI-compatible** chat endpoint (OpenAI, a gateway, or a local vLLM/Ollama server).
+Configure it via the standard environment variables:
+
+```bash
+export OPENAI_BASE_URL="http://127.0.0.1:9908/v1"   # gateway root or .../v1 (both work)
+export OPENAI_API_KEY="EMPTY"                        # any non-empty string for a local server
+```
+
+or pass `api_base=` / `api_key=` explicitly (these win over the env vars). The base
+URL is auto-normalized to end in `/v1`. Tests and the offline demo inject a mock
+client, so they need no endpoint and no key. Full details, model guidance and a local
+vLLM recipe are in [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
+
 ## Usage
 
 ```python

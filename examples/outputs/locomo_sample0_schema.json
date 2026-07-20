@@ -1,0 +1,212 @@
+{
+ "dataset": "LoCoMo sample_id=conv-26",
+ "speakers": [
+  "Caroline",
+  "Melanie"
+ ],
+ "entities": {
+  "Caroline": {
+   "support_group_experience": {
+    "belief": "felt accepted and given courage to embrace myself",
+    "belief_t": "1:56 pm on 8 May, 2023",
+    "superseded": [],
+    "exceptions": [
+     {
+      "value": "felt accepted",
+      "t": "4:33 pm on 12 July, 2023"
+     }
+    ],
+    "n_obs": 4
+   },
+   "education_plan": {
+    "belief": "continue my edu and check out career options",
+    "belief_t": "1:56 pm on 8 May, 2023",
+    "superseded": [],
+    "exceptions": [],
+    "n_obs": 2
+   },
+   "job_interest": {
+    "belief": "counseling or working in mental health",
+    "belief_t": "1:56 pm on 8 May, 2023",
+    "superseded": [],
+    "exceptions": [],
+    "n_obs": 3
+   },
+   "support_system": {
+    "belief": "supportive network",
+    "belief_t": "9:55 am on 22 October, 2023",
+    "superseded": [
+     [
+      "friends, family and mentors",
+      "9:55 am on 22 October, 2023"
+     ]
+    ],
+    "exceptions": [
+     {
+      "value": "community",
+      "t": "4:33 pm on 12 July, 2023"
+     },
+     {
+      "value": "adoption advice/assistance group",
+      "t": "3:31 pm on 23 August, 2023"
+     }
+    ],
+    "n_obs": 8
+   },
+   "support_system_duration": {
+    "belief": "4 years",
+    "belief_t": "7:55 pm on 9 June, 2023",
+    "superseded": [],
+    "exceptions": [],
+    "n_obs": 2
+   },
+   "art_expression": {
+    "belief": "expressing my trans experience",
+    "belief_t": "2:24 pm on 14 August, 2023",
+    "superseded": [],
+    "exceptions": [],
+    "n_obs": 5
+   },
+   "art_impact": {
+    "belief": "great way to work through stuff I'm going through",
+    "belief_t": "2:24 pm on 14 August, 2023",
+    "superseded": [],
+    "exceptions": [],
+    "n_obs": 3
+   },
+   "art_theme": {
+    "belief": "self-acceptance and love",
+    "belief_t": "2:24 pm on 14 August, 2023",
+    "superseded": [],
+    "exceptions": [],
+    "n_obs": 4
+   },
+   "art_belief": {
+    "belief": "teaches me to accept the beauty of imperfections",
+    "belief_t": "2:24 pm on 14 August, 2023",
+    "superseded": [],
+    "exceptions": [],
+    "n_obs": 1
+   },
+   "parenting_plan": {
+    "belief": "adoptive mom",
+    "belief_t": "10:31 am on 13 October, 2023",
+    "superseded": [
+     [
+      "ready to be a mom",
+      "10:31 am on 13 October, 2023"
+     ]
+    ],
+    "exceptions": [],
+    "n_obs": 5
+   },
+   "volunteering_experience": {
+    "belief": "volunteered at an LGBTQ+ youth center",
+    "belief_t": "3:19 pm on 28 August, 2023",
+    "superseded": [],
+    "exceptions": [],
+    "n_obs": 1
+   },
+   "volunteering_importance": {
+    "belief": "important part of my life",
+    "belief_t": "3:19 pm on 28 August, 2023",
+    "superseded": [],
+    "exceptions": [],
+    "n_obs": 1
+   },
+   "volunteering_plan": {
+    "belief": "carry on volunteering at the youth center",
+    "belief_t": "3:19 pm on 28 August, 2023",
+    "superseded": [],
+    "exceptions": [],
+    "n_obs": 1
+   },
+   "volunteering_activity": {
+    "belief": "putting together a talent show for the kids",
+    "belief_t": "3:19 pm on 28 August, 2023",
+    "superseded": [],
+    "exceptions": [],
+    "n_obs": 1
+   },
+   "music_instrument": {
+    "belief": "guitar",
+    "belief_t": "3:19 pm on 28 August, 2023",
+    "superseded": [],
+    "exceptions": [],
+    "n_obs": 1
+   },
+   "guitar_type": {
+    "belief": "acoustic",
+    "belief_t": "3:19 pm on 28 August, 2023",
+    "superseded": [],
+    "exceptions": [],
+    "n_obs": 1
+   },
+   "guitar_experience": {
+    "belief": "started playing acoustic guitar about five years ago",
+    "belief_t": "3:19 pm on 28 August, 2023",
+    "superseded": [],
+    "exceptions": [],
+    "n_obs": 1
+   },
+   "favorite_song": {
+    "belief": "Brave by Sara Bareilles",
+    "belief_t": "3:19 pm on 28 August, 2023",
+    "superseded": [],
+    "exceptions": [],
+    "n_obs": 1
+   }
+  },
+  "Melanie": {
+   "hobby": {
+    "belief": "painting",
+    "belief_t": "1:56 pm on 8 May, 2023",
+    "superseded": [],
+    "exceptions": [],
+    "n_obs": 6
+   },
+   "hobby_effect": {
+    "belief": "a fun way to express my feelings and get creative",
+    "belief_t": "1:56 pm on 8 May, 2023",
+    "superseded": [],
+    "exceptions": [],
+    "n_obs": 5
+   },
+   "support_system": {
+    "belief": "husband and kids",
+    "belief_t": "7:55 pm on 9 June, 2023",
+    "superseded": [],
+    "exceptions": [],
+    "n_obs": 2
+   },
+   "marriage_duration": {
+    "belief": "5 years",
+    "belief_t": "7:55 pm on 9 June, 2023",
+    "superseded": [],
+    "exceptions": [],
+    "n_obs": 1
+   },
+   "mental_health": {
+    "belief": "important",
+    "belief_t": "4:33 pm on 12 July, 2023",
+    "superseded": [],
+    "exceptions": [],
+    "n_obs": 1
+   },
+   "art_expression": {
+    "belief": "get our emotions out",
+    "belief_t": "10:31 am on 13 October, 2023",
+    "superseded": [],
+    "exceptions": [],
+    "n_obs": 1
+   },
+   "art_theme": {
+    "belief": "tranquility",
+    "belief_t": "10:31 am on 13 October, 2023",
+    "superseded": [],
+    "exceptions": [],
+    "n_obs": 1
+   }
+  }
+ }
+}

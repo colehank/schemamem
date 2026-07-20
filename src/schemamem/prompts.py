@@ -16,6 +16,14 @@ belief value. Your job: from a NEW message, extract assertions and judge each ag
 CRITICAL RULES:
 - One assertion = one entity's one slot taking one value. Extract assertions for ANY entity/slot the
   message speaks to, INCLUDING slots not yet in the schema (mint a new stable snake_case slot name).
+- "entity" MUST be a bare name of a person or thing (e.g. "Caroline", "user"). NEVER write a compound
+  like "Caroline.hobby" or "Entity.slot" in the entity field. If KNOWN ENTITIES are listed, reuse one
+  of those exact names rather than inventing a variant.
+- REUSE an existing slot name from CURRENT SCHEMA when the message speaks to the same attribute; only
+  mint a new slot for a genuinely new attribute. Keep slots coarse (e.g. one "hobby" slot, not
+  "hobby", "hobby_effect", "hobby_reason"). Do not create near-duplicate slots.
+- Only emit an assertion for a durable attribute/belief about an entity (a preference, trait, status,
+  plan). Skip one-off pleasantries and narration that do not update a belief.
 - Do NOT decompose a single belief into its parts. "I'm a strict vegetarian (no meat, eggs, dairy)"
   is ONE assertion: slot=diet, value="strict vegetarian". The no-meat/eggs/dairy are its DEFINITION,
   not separate violating values.
