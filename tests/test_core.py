@@ -147,6 +147,27 @@ def test_slot_merge_routes_near_duplicate_into_existing_slot():
     assert len(slots["artwork"].ledger) == 2
 
 
+def test_slot_judge_merges_same_attribute_not_same_topic():
+    """(a, LLM path) slot_judge decides same-ATTRIBUTE merges: painting-ish slots
+    collapse into one; a same-TOPIC-but-different-attribute slot stays separate."""
+    def judge(new_name, new_value, existing):
+        art = lambda s: any(w in s for w in ("art", "paint", "draw", "relax"))
+        if art(new_name):
+            for n, _ in existing:
+                if art(n):
+                    return n
+        return None   # different attribute -> keep separate
+    g = SchemaGraph(k=2, slot_judge=judge)
+    mk = lambda slot, val, ep: Observation(entity="u", slot=slot, value=val, pred_error=0.0,
+                                           episode_id=ep, t=ep, candidate_id=None)
+    g.ingest(mk("artwork", "painting", "ep1"))
+    g.ingest(mk("relaxation_method", "painting", "ep2"))     # merges -> artwork
+    g.ingest(mk("volunteering", "at a shelter", "ep3"))      # different attribute -> separate
+    slots = g.get_schema("u").slots
+    assert set(slots) == {"artwork", "volunteering"}, set(slots)
+    assert len(slots["artwork"].ledger) == 2
+
+
 def test_paraphrase_guard_reinforces_instead_of_superseding():
     """(b) A corroborated candidate whose value paraphrases the belief reinforces
     it (ASSIMILATE) rather than superseding it (no false evolution)."""

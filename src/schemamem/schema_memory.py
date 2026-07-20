@@ -23,10 +23,10 @@ from typing import Optional
 
 try:                                    # package-relative when vendored
     from .core import SchemaGraph, Observation, Action
-    from .prompts import CLEAN_SYS, EXTRACT_SYS, REWRITE_SYS, ANSWER_SYS
+    from .prompts import CLEAN_SYS, EXTRACT_SYS, REWRITE_SYS, ANSWER_SYS, SLOT_MERGE_SYS
 except ImportError:                     # flat import in dev
     from core import SchemaGraph, Observation, Action
-    from prompts import CLEAN_SYS, EXTRACT_SYS, REWRITE_SYS, ANSWER_SYS
+    from prompts import CLEAN_SYS, EXTRACT_SYS, REWRITE_SYS, ANSWER_SYS, SLOT_MERGE_SYS
 
 
 def _extract_json(text: str, key: str = "assertions") -> dict:
@@ -89,7 +89,8 @@ class SchemaMemorySystem:
         online_decay: bool = False,
         decay_window: int = 3,
         enable_forgetting: bool = False,
-        enable_slot_merge: bool = False,     # ablation: embedding slot canonicalization
+        enable_slot_merge: bool = False,     # slot canonicalization (merge duplicate slots)
+        slot_merge_mode: str = "llm",        # "llm" (same-attribute judge) | "embedding"
         enable_paraphrase_guard: bool = True,
         slot_merge_threshold: float = 0.66,
         paraphrase_threshold: float = 0.90,
@@ -105,6 +106,7 @@ class SchemaMemorySystem:
         self.decay_window = int(decay_window)
         self.enable_forgetting = bool(enable_forgetting)
         self.enable_slot_merge = bool(enable_slot_merge)
+        self.slot_merge_mode = slot_merge_mode
         self.embedding_model = embedding_model
         self._emb_cache: dict = {}
         self.state_path = state_path
@@ -132,8 +134,15 @@ class SchemaMemorySystem:
             k=self.min_evidence_count, rewriter=self._rewrite_belief,
             online_decay=self.online_decay, decay_window=self.decay_window,
             epsilon=self.reconstruction_tolerance if self.enable_forgetting else None,
+            # paraphrase guard and embedding slot-merge both need cosine; the LLM
+            # slot judge needs the judge callable. Wire whichever the config asks for.
             similarity=(self._similarity
-                        if (self.enable_slot_merge or enable_paraphrase_guard) else None),
+                        if (enable_paraphrase_guard
+                            or (self.enable_slot_merge and self.slot_merge_mode == "embedding"))
+                        else None),
+            slot_judge=(self._judge_slot
+                        if (self.enable_slot_merge and self.slot_merge_mode == "llm")
+                        else None),
             slot_merge=self.enable_slot_merge,
             paraphrase_guard=bool(enable_paraphrase_guard),
             slot_merge_threshold=slot_merge_threshold,
@@ -182,6 +191,21 @@ class SchemaMemorySystem:
         if na == 0 or nb == 0:
             return 0.0
         return max(0.0, dot / (na * nb))
+
+    def _judge_slot(self, new_name: str, new_value, existing: list):
+        """LLM same-attribute judge for slot canonicalization. `existing` is a list of
+        (slot_name, belief). Returns an existing slot name to merge into, or None to
+        keep the new slot. One LLM call; conservative (prefers None on doubt)."""
+        if not existing:
+            return None
+        exist_block = "\n".join(f"- {n}: {b}" for n, b in existing)
+        user = (f"ENTITY's EXISTING slots (name: current belief):\n{exist_block}\n\n"
+                f"NEW slot -> name: {new_name}, value: {new_value}\n\n"
+                f"Is the NEW slot the SAME ATTRIBUTE as one of the existing slots? JSON:")
+        parsed = _extract_json(self._chat(SLOT_MERGE_SYS, user, max_tokens=40), key="_")
+        chosen = parsed.get("merge_into")
+        # accept only an exact existing-slot name
+        return chosen if chosen in {n for n, _ in existing} else None
 
     def _rewrite_belief(self, old_belief, candidate) -> str:
         obs_lines = "\n".join(f"- {o.value} ({o.t})" for o in candidate.observations)

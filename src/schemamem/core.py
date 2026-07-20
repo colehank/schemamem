@@ -113,6 +113,7 @@ class SchemaGraph:
                  online_decay: bool = False, decay_window: int = 3,
                  epsilon: Optional[float] = None,
                  similarity: Optional[Callable] = None,
+                 slot_judge: Optional[Callable] = None,
                  slot_merge: bool = True,
                  paraphrase_guard: bool = True,
                  slot_merge_threshold: float = 0.66,
@@ -145,6 +146,12 @@ class SchemaGraph:
         self.decay_window = decay_window
         self.epsilon = epsilon
         self.similarity = similarity
+        # slot_judge(new_name, new_value, [(existing_name, belief), ...]) -> existing
+        # name to merge into, or None to keep the new slot. A same-ATTRIBUTE decision
+        # (semantic equivalence), stronger than embedding cosine which conflates
+        # same-attribute with same-topic. Takes priority over `similarity` for slot
+        # canonicalization when provided.
+        self.slot_judge = slot_judge
         self.slot_merge = slot_merge
         self.paraphrase_guard = paraphrase_guard
         self.slot_merge_threshold = slot_merge_threshold
@@ -185,21 +192,40 @@ class SchemaGraph:
         return f"{name}: {value}" if value else name
 
     def _canonical_slot_name(self, schema: "Schema", name: str, value) -> str:
-        """(a) Slot canonicalization: if `name` is not an existing slot but is close
-        (by similarity, comparing name+value descriptors) to one that already exists
-        on this entity, return that existing slot's name so the observation lands
-        there instead of minting a near-duplicate slot. No-op when similarity is
-        disabled or the slot already exists."""
-        if (self.similarity is None or not self.slot_merge
-                or name in schema.slots or not schema.slots):
+        """(a) Slot canonicalization: if `name` is not an existing slot but names the
+        SAME ATTRIBUTE as one that already exists on this entity, return that existing
+        slot's name so the observation lands there instead of minting a near-duplicate
+        slot. No-op when disabled or the slot already exists.
+
+        Preference order:
+          1. slot_judge (LLM same-attribute judgment) — distinguishes same-attribute
+             from merely same-topic, which embedding cosine cannot.
+          2. similarity (embedding cosine over name+value descriptors) — fallback.
+        """
+        if not self.slot_merge or name in schema.slots or not schema.slots:
+            return name
+
+        # 1) LLM same-attribute judge (strong signal)
+        if self.slot_judge is not None:
+            existing = [(n, s.belief) for n, s in schema.slots.items()]
+            try:
+                chosen = self.slot_judge(name, value, existing)
+            except Exception:
+                chosen = None
+            if chosen in schema.slots:
+                return chosen
+            return name
+
+        # 2) embedding cosine fallback
+        if self.similarity is None:
             return name
         incoming = self._slot_descriptor(name, value)
         best, best_sim = name, 0.0
-        for existing, slot in schema.slots.items():
-            ref = self._slot_descriptor(existing, slot.belief)
+        for existing_name, slot in schema.slots.items():
+            ref = self._slot_descriptor(existing_name, slot.belief)
             sim = self.similarity(incoming, ref)
             if sim > best_sim:
-                best, best_sim = existing, sim
+                best, best_sim = existing_name, sim
         return best if best_sim >= self.slot_merge_threshold else name
 
     def ingest(self, obs: Observation) -> Action:
