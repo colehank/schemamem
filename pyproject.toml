@@ -1,0 +1,48 @@
+[project]
+name = "schemamem"
+version = "0.1.0"
+description = "Schema-memory-inspired long-term memory for LLM agents: distinguishing genuine change from isolated exception."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "Guohao Zhang" }]
+keywords = ["llm", "agent-memory", "long-term-memory", "schema", "changepoint-detection"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "openai>=1.0",
+]
+
+[project.optional-dependencies]
+eval = [
+    "numpy>=1.24",
+]
+
+[project.urls]
+Homepage = "https://github.com/colehank/schemamem"
+Repository = "https://github.com/colehank/schemamem"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/schemamem"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

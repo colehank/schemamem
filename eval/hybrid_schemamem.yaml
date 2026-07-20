@@ -1,0 +1,38 @@
+# SchemaMem — MemoryData integration config (SKELETON / template).
+# agent_name MUST contain the substring "schemamem" — routing in utils/agent.py is
+# by substring match (_is_agent_type). Do not rename away from that substring.
+
+# -- required ---------------------------------------------------------------
+agent_name: Agentic_memory_schemamem
+model: Qwen3-8B                       # local Qwen3-8B vLLM chat service (port 9908)
+temperature: 0.0
+input_length_limit: 10000000
+buffer_length: 1000
+output_dir: ./results/outputs/Qwen3-8B-schemamem
+agent_chunk_size: 4096
+retrieve_num: 10
+
+# -- optional (tokenizer / provider metadata) ------------------------------
+provider: openai_compatible
+api_key_env: OPENAI_API_KEY
+base_url: http://127.0.0.1:9908/v1    # keep the wrapper client aligned with the chat endpoint
+base_url_env:
+tokenizer_encoding: cl100k_base
+
+# -- SchemaMem runtime (read by _initialize_schemamem_agent via schemamem_* keys) --
+schemamem_backend: openai
+schemamem_api_key_env: OPENAI_API_KEY
+schemamem_base_url: http://127.0.0.1:9908/v1     # local Qwen3-8B chat endpoint
+schemamem_embedding_provider: openai_compatible
+schemamem_embedding_api_key_env: OPENAI_API_KEY
+schemamem_embedding_base_url: http://127.0.0.1:9009/v1   # local embedding endpoint
+schemamem_embedding_model: Qwen3-Embedding-4B    # local 9009 service exposes this deployed short name
+embedding_model: Qwen3-Embedding-4B
+embedding_api_key_env: OPENAI_API_KEY
+embedding_base_url: http://127.0.0.1:9009/v1
+embedding_dim: 2560
+
+# -- SchemaMem core hyperparameters (the mechanism knobs) ------------------
+schemamem_change_threshold: 0.5          # genuine belief-change vs isolated exception decision boundary
+schemamem_reconstruction_tolerance: 0.15 # epsilon for reconstruction-gated forgetting/compression
+schemamem_min_evidence_count: 2          # cumulative evidence count to trigger expectation reconstruction
