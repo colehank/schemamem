@@ -17,7 +17,8 @@ def _run(stream, k=2, rewriter=None, seed_belief=None):
 
 def test_drift_vs_exception():
     """The canonical case: one-off steak -> exception; sustained fish -> accommodate."""
-    rw = lambda old, c: "pescatarian" if c.candidate_id == "fish" else c.observations[-1].value
+    def rw(old, c):
+        return "pescatarian" if c.candidate_id == "fish" else c.observations[-1].value
     stream = [
         _obs("strict-vegetarian", 0.0, "ep1", "t1", None),
         _obs("steak",             1.0, "ep2", "t2", "meat"),
@@ -73,7 +74,8 @@ def test_no_conflict_stream_all_assimilate():
 
 
 def test_k3_needs_three_episodes():
-    rw = lambda old, c: "pescatarian"
+    def rw(old, c):
+        return "pescatarian"
     stream = [
         _obs("vegan", 0.0, "ep1", "t1", None),
         _obs("fish",  1.0, "ep2", "t2", "fish"),
@@ -87,7 +89,8 @@ def test_k3_needs_three_episodes():
 
 def test_online_decay_flushes_exception_before_finalize():
     """A stalled candidate ages into an exception ONLINE after decay_window episodes."""
-    rw = lambda old, c: "pescatarian"
+    def rw(old, c):
+        return "pescatarian"
     g = SchemaGraph(k=2, online_decay=True, decay_window=2, rewriter=rw)
     stream = [
         _obs("strict-veg", 0.0, "ep1", "t1", None),
@@ -133,15 +136,18 @@ def test_slot_merge_routes_near_duplicate_into_existing_slot():
     """(a) With a similarity fn, a near-duplicate slot name is merged into the
     existing slot rather than minting a new one."""
     # descriptors are "name: value"; treat any two art/painting descriptors as close
+    def art(s):
+        return "art" in s or "paint" in s or "draw" in s
+
     def sim(a, b):
-        art = lambda s: ("art" in s or "paint" in s or "draw" in s)
         return 1.0 if a == b else (0.8 if art(a) and art(b) else 0.0)
     g2 = SchemaGraph(k=2, similarity=sim, slot_merge_threshold=0.6)
     o1 = Observation(entity="u", slot="artwork", value="painting", pred_error=0.0,
                      episode_id="ep1", t="t1", candidate_id=None)
     o2 = Observation(entity="u", slot="artistic expression", value="drawing", pred_error=0.0,
                      episode_id="ep2", t="t2", candidate_id=None)
-    g2.ingest(o1); g2.ingest(o2)
+    g2.ingest(o1)
+    g2.ingest(o2)
     slots = g2.get_schema("u").slots
     assert list(slots.keys()) == ["artwork"], slots.keys()   # merged, not two slots
     assert len(slots["artwork"].ledger) == 2
@@ -150,16 +156,20 @@ def test_slot_merge_routes_near_duplicate_into_existing_slot():
 def test_slot_judge_merges_same_attribute_not_same_topic():
     """(a, LLM path) slot_judge decides same-ATTRIBUTE merges: painting-ish slots
     collapse into one; a same-TOPIC-but-different-attribute slot stays separate."""
+    def art(s):
+        return any(w in s for w in ("art", "paint", "draw", "relax"))
+
     def judge(new_name, new_value, existing):
-        art = lambda s: any(w in s for w in ("art", "paint", "draw", "relax"))
         if art(new_name):
             for n, _ in existing:
                 if art(n):
                     return n
         return None   # different attribute -> keep separate
     g = SchemaGraph(k=2, slot_judge=judge)
-    mk = lambda slot, val, ep: Observation(entity="u", slot=slot, value=val, pred_error=0.0,
-                                           episode_id=ep, t=ep, candidate_id=None)
+
+    def mk(slot, val, ep):
+        return Observation(entity="u", slot=slot, value=val, pred_error=0.0,
+                           episode_id=ep, t=ep, candidate_id=None)
     g.ingest(mk("artwork", "painting", "ep1"))
     g.ingest(mk("relaxation_method", "painting", "ep2"))     # merges -> artwork
     g.ingest(mk("volunteering", "at a shelter", "ep3"))      # different attribute -> separate
@@ -214,7 +224,10 @@ if __name__ == "__main__":
     passed = 0
     for t in tests:
         try:
-            t(); print(f"PASS {t.__name__}"); passed += 1
+            t()
+            print(f"PASS {t.__name__}")
+            passed += 1
         except Exception:
-            print(f"FAIL {t.__name__}"); traceback.print_exc()
+            print(f"FAIL {t.__name__}")
+            traceback.print_exc()
     print(f"\n{passed}/{len(tests)} passed")

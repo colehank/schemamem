@@ -13,7 +13,8 @@ class _Resp:
 
 class _Chat:
     def __init__(self, scripts):
-        self.scripts = scripts; self.i = 0
+        self.scripts = scripts
+        self.i = 0
 
     def create(self, **kw):
         sysmsg = kw["messages"][0]["content"]
@@ -34,7 +35,8 @@ class _Chat:
             return _Resp("pescatarian")
         if sysmsg.startswith("Answer the question"):
             return _Resp("pescatarian; formerly strict vegetarian; once ate meat (ep2).")
-        r = self.scripts[self.i]; self.i += 1
+        r = self.scripts[self.i]
+        self.i += 1
         return _Resp(r)
 
 
@@ -93,7 +95,10 @@ if __name__ == "__main__":
     passed = 0
     for t in tests:
         try:
-            t(); print(f"PASS {t.__name__}"); passed += 1
+            t()
+            print(f"PASS {t.__name__}")
+            passed += 1
         except Exception:
-            print(f"FAIL {t.__name__}"); traceback.print_exc()
+            print(f"FAIL {t.__name__}")
+            traceback.print_exc()
     print(f"\n{passed}/{len(tests)} passed")

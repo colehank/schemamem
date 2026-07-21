@@ -19,11 +19,23 @@ class _Chat:
 
     def create(self, **kw):
         sysmsg = kw["messages"][0]["content"]
+        if sysmsg.startswith("You are the L1 cleaning stage"):
+            # L1 topical pass: echo the raw message back as one user-subject fact,
+            # so each MESSAGES entry maps 1:1 to an L2 extraction script below.
+            import json as _j
+            raw = kw["messages"][-1]["content"].split("RAW DIALOGUE (one episode):\n", 1)[-1]
+            return _Resp(_j.dumps({"facts": [{"subject": "user",
+                                              "text": raw.rsplit("\n\nJSON:", 1)[0].strip()}]}))
+        if sysmsg.startswith("You extract QUANTIFIABLE STATE"):
+            # L1 quantifiable-state pass: this dialogue carries no counts or amounts,
+            # so it contributes nothing and must not consume a script.
+            return _Resp('{"facts": []}')
         if sysmsg.startswith("A user's belief"):      # accommodation rewrite
             return _Resp("pescatarian")
         if sysmsg.startswith("Answer"):                # answering
             return _Resp("Pescatarian now; formerly a strict vegetarian; once ate meat (a birthday).")
-        r = self.scripts[self.i]; self.i += 1
+        r = self.scripts[self.i]
+        self.i += 1
         return _Resp(r)
 
 

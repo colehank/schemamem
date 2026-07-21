@@ -18,14 +18,13 @@ flat-retrieval fallback on entities that have no schema yet (the design's
 from __future__ import annotations
 
 import json
-import re
 from typing import Optional
 
 try:                                    # package-relative when vendored
-    from .core import SchemaGraph, Observation, Action, _differ_in_quantity
+    from .core import SchemaGraph, Observation, _differ_in_quantity
     from .prompts import CLEAN_SYS, QUANT_SYS, EXTRACT_SYS, REWRITE_SYS, ANSWER_SYS, SLOT_MERGE_SYS
 except ImportError:                     # flat import in dev
-    from core import SchemaGraph, Observation, Action, _differ_in_quantity
+    from core import SchemaGraph, Observation, _differ_in_quantity
     from prompts import CLEAN_SYS, QUANT_SYS, EXTRACT_SYS, REWRITE_SYS, ANSWER_SYS, SLOT_MERGE_SYS
 
 
@@ -55,11 +54,14 @@ def _extract_json(text: str, key: str = "assertions") -> dict:
                 in_str = False
             continue
         if ch == '"':
-            in_str = True; buf.append(ch)
+            in_str = True
+            buf.append(ch)
         elif ch == "{":
-            depth += 1; buf.append(ch)
+            depth += 1
+            buf.append(ch)
         elif ch == "}":
-            depth -= 1; buf.append(ch)
+            depth -= 1
+            buf.append(ch)
             if depth == 0:
                 try:
                     objs.append(json.loads("".join(buf)))
@@ -496,7 +498,8 @@ class SchemaMemorySystem:
             import math
             def cos(a, b):
                 dot = sum(x * y for x, y in zip(a, b))
-                na = math.sqrt(sum(x * x for x in a)); nb = math.sqrt(sum(y * y for y in b))
+                na = math.sqrt(sum(x * x for x in a))
+                nb = math.sqrt(sum(y * y for y in b))
                 return dot / (na * nb) if na and nb else 0.0
             scored = [((e, s), cos(qv, self._embed(descriptor(e, s)))) for e, s in pairs]
             scored.sort(key=lambda z: z[1], reverse=True)
@@ -522,7 +525,8 @@ class SchemaMemorySystem:
         """Best-effort parse of a timestamp string to a sortable key. Returns a
         datetime, or None when unparseable. Handles the LoCoMo/LongMemEval forms
         seen in the data (e.g. '2023/10/10 (Tue) 23:08', '2023-06-12')."""
-        import re as _re, datetime as _dt
+        import re as _re
+        import datetime as _dt
         if not t:
             return None
         m = _re.search(r"(\d{4})[/-](\d{1,2})[/-](\d{1,2})", str(t))
