@@ -61,6 +61,11 @@ class SchemaMemAdapter:
         change_threshold: float = 0.5,          # genuine-change vs exception decision
         reconstruction_tolerance: float = 0.15, # epsilon for reconstruction-gated forgetting
         min_evidence_count: int = 2,            # cumulative count to trigger expectation update
+        # L1 extraction shape. The harness already chunks the context before calling
+        # add_chunk, so the QUANT sliding window may be re-splitting work the harness
+        # did — set l1_window_chars=0 to disable windowing and measure the difference.
+        l1_window_chars: int = 4000,
+        l1_quant_samples: int = 1,
         **extra_kwargs,
     ) -> None:
         self.model = model
@@ -73,6 +78,8 @@ class SchemaMemAdapter:
         self.change_threshold = float(change_threshold)
         self.reconstruction_tolerance = float(reconstruction_tolerance)
         self.min_evidence_count = int(min_evidence_count)
+        self.l1_window_chars = int(l1_window_chars)
+        self.l1_quant_samples = int(l1_quant_samples)
 
         # LLM client for answering (OpenAI-compatible: points at local vLLM 9908).
         self._client = OpenAI(api_key=api_key or "EMPTY", base_url=api_base)
@@ -89,6 +96,8 @@ class SchemaMemAdapter:
                 change_threshold=self.change_threshold,
                 reconstruction_tolerance=self.reconstruction_tolerance,
                 min_evidence_count=self.min_evidence_count,
+                l1_window_chars=self.l1_window_chars,
+                l1_quant_samples=self.l1_quant_samples,
                 state_path=state_path,
             )
         else:
