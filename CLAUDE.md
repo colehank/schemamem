@@ -23,10 +23,20 @@ contribution" as settled, and do not hardcode abstract/claim wording into code, 
 The living sources of truth for the science are, in order:
 
 - `docs/design/core_model.md` — the core mental model (field gap → human-memory grounding →
-  motivation → the model). **This is the canonical conceptual document.**
+  motivation → the model). **This is the canonical conceptual document** — start here for the
+  four-part conceptual arc (field gap → human memory → motivation → model).
 - `docs/design/method_reflection.md` — the algorithm design reasoning (one-signal/two-axis
-  convergence, the k≥2 identifiability + MDL argument, data-structure unification, open forks).
-- `docs/design/abstract.md` — the current paper abstract + title candidates + author notes.
+  convergence, the k≥2 identifiability + MDL argument, data-structure unification, open forks,
+  and per-item landing status against `core.py`).
+- `docs/design/full_paper_zh.md` — **the paper's full Chinese draft, actively maintained**.
+  This is the long-form expansion of `core_model.md`: everything from Introduction to Method,
+  Experiments, and Conclusion, in Chinese, kept in sync with each science decision. It is
+  **not** an archived draft — it evolves with the method. Use it as the source of truth for
+  the paper's structure, section ordering, and current framing; the English submission (via
+  AuthorKit27) will be translated from this file. When you land a science change, update this
+  file alongside `core_model.md`.
+- `docs/design/abstract.md` — historical abstract drafting notes (the registered submission
+  is authored by the user directly; this file is preserved as the drafting history).
 
 When the science and this file disagree, **the design docs win** — and when you make a framing
 decision with the user, update the relevant `docs/design/*.md`, not this file. Keep CLAUDE.md about
