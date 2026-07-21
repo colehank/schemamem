@@ -58,7 +58,9 @@ for sess in instance["haystack_sessions"]:
     body = "\n".join(f"user: {t['content']}" for t in sess if t["role"]=="user")
     mem.add_chunk(body, timestamp=sess["timestamp"], speakers=["user"])
 mem.finalize()
-ans = mem.answer(instance["question"])   # 存到 lme_ku_results.json
+# 注意:没有 mem.answer() —— 早期草稿写错了。真实接口是两步(与 harness 契约一致):
+ctx, _groups = mem.retrieve_with_source_groups(instance["question"])
+ans = mem.ask_with_retrieved_context(instance["question"], ctx)
 ```
 
 **输出格式**(必须四方法共用):
@@ -153,7 +155,52 @@ ans = mem.answer(instance["question"])   # 存到 lme_ku_results.json
   - MB-noisy traj0: artifact `055c8854-bda8-41ab-9e48-136e05bd7dc1`
   - 合集: artifact `6cc70cdc-822e-4322-895e-18ba1fb34176`
 - **LME-KU 15 题诊断**(11/15 迭代过程): artifact `4e14fd91-3fd5-4d8f-b55d-c96c560c2d7d`;
-- **SchemaMem 主接口**: `SchemaMemorySystem.add_chunk / .add_chunks / .finalize / .answer`;`bench_adapters.add_fc_fact` for FC.
+- **SchemaMem 主接口**: `SchemaMemorySystem.add_chunk / .add_chunks / .finalize / .retrieve_with_source_groups / .ask_with_retrieved_context`;`bench_adapters.add_fc_fact` for FC。(**没有 `.answer()`** —— 本文档早期版本误载,已订正。)
+
+---
+
+## 5b. 接线现状与本轮决定(2026-07-22 核实)
+
+**host 上的真实状态**(`turing` → `~/SchemaMem-eval/MemoryData`,ssh config 里是 `turing` 不是 `turing_pub`):
+
+- **三个基线 + 两个无演化对照全部已接好**,不需要重写 adapter:
+  `methods/{a_mem,mem0,memorybank,schemamem,embedding_rag}/` 齐全;
+  `config/{hybrid_a_mem,sequential_mem0,memorybank,hybrid_schemamem}.yaml` +
+  `config/reference_{long_context_agent,embedding_rag}.yaml`。
+- **数据齐全**:`~/.cache/huggingface` 42G,含 `datasets--ai-hyz--MemoryAgentBench`
+  与 `datasets--xiaowu0162--longmemeval-cleaned`;`datasets/{LoCoMo,MemBench,longBench_*}`。
+- **既有结果只是 smoke**:四方法都只在 Qwen3-8B、`max_test_samples: 5` 下跑过,**无任何真实规模数字**。
+- **本地缺失**:`bench_samples.json` 只在 host 家目录,从未提交进本仓库;`/tmp/lme_oracle.json` 已随 /tmp 清空消失。
+
+**本轮决定**:
+
+1. **统一口径 = gpt-4o-mini + text-embedding-3-small(dim 1536),经 dmxapi 网关**。
+   一度考虑 gpt-4o,按 harness 实参估算主表全量约 $5k–10k(mini 约 1/16),且 §7 已记录
+   "4o probe 对已诊断失败无用",故维持 mini。四个 gpt-4o-mini config 已建:
+   `config/{schemamem,a_mem,mem0,memorybank}_gpt4omini.yaml`,除机制外 LLM/embedding 完全同源。
+2. **检索预算:保持各方法 harness 默认,不对齐**(选项 a)。当前值:
+   A-MEM `retrieve_num=2`、Mem0 `100`、SchemaMem `10`、MemoryBank `10`。
+   单位不可比(A-MEM 的 note 含上下文+关键词+链接,Mem0 的 memory 是单句事实)。
+   **论文须主动披露这张表并说明单位差异** —— 主动说是免疫,被问出来是失分。
+   选 (a) 而非按 token 对齐,是为了不落"为求胜而调对手参数"的口实。
+3. **凭据**:host `~/.schemamem_env`(`chmod 600`,不进仓库),内含 `OPENAI_API_KEY` /
+   `OPENAI_BASE_URL`;运行前 `. ~/.schemamem_env`。
+
+**仍缺的接线**:
+
+- `benchmark/memoryagentbench/Conflict_Resolution/config/` 下**只有 `Factconsolidation_mh_6k.yaml`,缺 SH-6k**,而 A 轴要 SH+MH 两档 → 需建 SH config。
+- 各 dataset config 的 `max_test_samples: 5` 是 smoke 值,全量跑须改。
+- Phase 3 对比图要求的 `dump_memory(traj_id) -> dict` 钩子,**SchemaMem 侧尚未实现**(数据都在 `SchemaGraph` 里,预计 ~20 行)。
+
+**运行方式**(host 上,conda env `memory-bench`):
+
+```bash
+cd ~/SchemaMem-eval/MemoryData && . ~/.schemamem_env
+source ~/miniconda3/etc/profile.d/conda.sh && conda activate memory-bench
+python main.py --agent_config config/schemamem_gpt4omini.yaml \
+  --dataset_config benchmark/memoryagentbench/Accurate_Retrieval/config/LongMemEval/Longmemeval_s.yaml \
+  --max_test_queries_ablation 1 --force
+```
 
 ---
 
