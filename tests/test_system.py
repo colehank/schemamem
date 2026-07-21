@@ -3,6 +3,7 @@
 Verifies the adapter contract end-to-end: add_chunk (L1->L2->L3) then
 retrieve_with_source_groups renders belief + superseded + exception correctly.
 """
+from schemamem.core import Observation
 from schemamem.schema_memory import SchemaMemorySystem
 
 
@@ -147,3 +148,21 @@ def test_verbatim_budget_zero_restores_schema_only_context():
     ctx, _ = sm.retrieve_with_source_groups("diet")
     assert "SOURCE EPISODES" not in ctx
     assert "current: pescatarian" in ctx
+
+
+def test_named_entity_outranks_topically_similar_slots():
+    """The graph is entity-centric: a query naming an entity must read THAT
+    entity's slots. Embedding cosine alone loses this — on FactConsolidation it
+    returned ten other sport slots and never the named entity's."""
+    sm = SchemaMemorySystem(model="mock", client=_Client([]), min_evidence_count=2)
+    # no embeddings from the mock -> exercises the structural fallback path
+    for ent, val in [("quarterback", "American football"),
+                     ("Alta IF", "association football"),
+                     ("goaltender", "pesapallo")]:
+        sm._graph.ingest(Observation(entity=ent, slot="sport", value=val,
+                                     pred_error=0.0, episode_id=f"ep{ent}",
+                                     t="t1", candidate_id=None))
+    ctx, _ = sm.retrieve_with_source_groups(
+        "Which sport is goaltender associated with?", k=1)
+    assert "goaltender" in ctx, ctx
+    assert "pesapallo" in ctx, ctx

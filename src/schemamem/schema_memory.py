@@ -584,6 +584,19 @@ class SchemaMemorySystem:
             parts += [o.value for o in slot.ledger[-3:]]
             return f"{entity} " + " ".join(str(p) for p in parts if p)
 
+        # ENTITY GROUNDING. The graph is entity-centric, so a query that NAMES an
+        # entity should read that entity's slots — not whatever embeds nearest.
+        # Cosine over topical descriptors reliably loses this: asked which sport
+        # the goaltender plays, it returned ten other sport slots and never the
+        # goaltender's, because they are all "about sport". Resolve the mention
+        # first, rank second; this is what having an entity index is for.
+        ql = f" {(query or '').lower()} "
+        def _mentioned(entity: str) -> bool:
+            e = (entity or "").strip().lower()
+            if len(e) < 3:
+                return False
+            return f" {e} " in ql or f" {e}'" in ql or f" {e}," in ql or f" {e}?" in ql
+
         ranked = pairs
         try:
             # one batched request for the query + every slot descriptor, instead of
@@ -600,11 +613,16 @@ class SchemaMemorySystem:
                 na = math.sqrt(sum(x * x for x in a))
                 nb = math.sqrt(sum(y * y for y in b))
                 return dot / (na * nb) if na and nb else 0.0
-            scored = [(p, cos(qv, sv)) for p, sv in zip(pairs, slot_vecs)]
+            # +1.0 for a named entity puts every mentioned entity's slots above
+            # every unmentioned one, while cosine still orders within each band.
+            scored = [(p, cos(qv, sv) + (1.0 if _mentioned(p[0]) else 0.0))
+                      for p, sv in zip(pairs, slot_vecs)]
             scored.sort(key=lambda z: z[1], reverse=True)
             ranked = [p for p, _ in scored[:k]]
         except Exception:
-            ranked = pairs[:k]
+            # no embeddings: entity grounding alone still beats arbitrary order
+            named = [p for p in pairs if _mentioned(p[0])]
+            ranked = (named + [p for p in pairs if p not in named])[:k]
 
         blocks, groups = [], []
         for entity, slot in ranked:
