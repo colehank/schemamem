@@ -24,6 +24,12 @@ class _Chat:
             raw = raw.rsplit("\n\nJSON:", 1)[0].strip()
             import json as _j
             return _Resp(_j.dumps({"facts": [{"subject": "user", "text": raw}]}))
+        if sysmsg.startswith("You extract QUANTIFIABLE STATE"):
+            # L1 second pass (quantifiable state, run per sliding window). These
+            # scripted messages carry no counts/amounts, so it contributes nothing;
+            # answering with an empty fact list keeps the per-message scripts
+            # mapping 1:1 to L2 extraction calls.
+            return _Resp('{"facts": []}')
         if sysmsg.startswith("A user's belief"):
             return _Resp("pescatarian")
         if sysmsg.startswith("Answer the question"):
@@ -60,14 +66,15 @@ def test_full_pipeline_renders_all_three_outcomes():
     for m in MSGS:
         sm.add_chunk(m)
     ctx, groups = sm.retrieve_with_source_groups("diet")
+    # dual-trace rendering: gist (current / previously / exception) over verbatim
     # current belief
-    assert "pescatarian (current)" in ctx, ctx
+    assert "current: pescatarian" in ctx, ctx
     # superseded trail (knowledge-update capability)
-    assert "strict vegetarian (was, superseded" in ctx, ctx
+    assert "previously: strict vegetarian" in ctx, ctx
     # protected exception (the capability change-only systems lose)
-    assert "ate meat (exception" in ctx, ctx
+    assert "exception: ate meat" in ctx, ctx
     # second slot seeded from a congruent first observation
-    assert "Beijing (current)" in ctx, ctx
+    assert "current: Beijing" in ctx, ctx
     # source groups exist for recall metrics
     assert len(groups) >= 1
 
