@@ -32,6 +32,18 @@ When the science and this file disagree, **the design docs win** — and when yo
 decision with the user, update the relevant `docs/design/*.md`, not this file. Keep CLAUDE.md about
 structure and process.
 
+For the empirical side (benchmarks, comparisons, and the current experiment plan) look at
+`docs/eval/`:
+
+- `docs/eval/benchmark_catalog.md` — full dimension/subset inventory of the four MemoryData
+  benchmarks (MAB, MemBench, LongMemEval-s, LoCoMo), verified from host parquet + configs.
+  Answers "what data exists" and "what's already wired".
+- `docs/eval/evolution_comparison_plan.md` — **the current AAAI-27 experiment plan**: the three
+  evolution-axis capabilities we must beat baselines on (A change-detection, B knowledge-update,
+  C exception-preservation), the phase-by-phase execution schedule with ROI ordering, the
+  handoff format for the baselines session, and the memory-structure comparison figure spec.
+  Start here when picking up eval work.
+
 ## Repository layout
 
 ```
