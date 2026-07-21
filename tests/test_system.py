@@ -102,3 +102,19 @@ if __name__ == "__main__":
             print(f"FAIL {t.__name__}")
             traceback.print_exc()
     print(f"\n{passed}/{len(tests)} passed")
+
+
+def test_dump_memory_exposes_all_four_fields():
+    """The Phase 3 structure-comparison hook: current / history / exceptions /
+    n_obs. SchemaMem is the only method that can fill all four — the exception
+    list is the field overwrite- and merge-style baselines leave empty."""
+    sm = SchemaMemorySystem(model="mock", client=_Client(SCRIPTS), min_evidence_count=2)
+    for m in MSGS:
+        sm.add_chunk(m)
+    dump = sm.dump_memory(traj_id="t0")
+    assert dump["traj_id"] == "t0"
+    diet = dump["entities"]["user"]["diet"]
+    assert diet["current"] == "pescatarian", diet
+    assert [h["value"] for h in diet["history"]] == ["strict vegetarian"], diet
+    assert [e["value"] for e in diet["exceptions"]] == ["ate meat"], diet
+    assert diet["n_obs"] == 5, diet

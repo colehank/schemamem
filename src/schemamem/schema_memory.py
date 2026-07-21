@@ -464,6 +464,40 @@ class SchemaMemorySystem:
         """Flush stalled candidates to protected exceptions (stream-end sweep)."""
         return self._graph.finalize()
 
+    def dump_memory(self, traj_id: Optional[str] = None) -> dict:
+        """Serialise the memory state for the cross-method structure comparison.
+
+        Four fields per slot, chosen so every baseline can be rendered in the same
+        shape and the structural gap is visible rather than argued:
+
+            current    - the belief in force now
+            history    - the superseded chain (overwrite-style systems leave this empty)
+            exceptions - protected isolated violations (no baseline can produce these)
+            n_obs      - observations that landed on this slot
+
+        Calls finalize() first, since exceptions only materialise at stream end.
+        `traj_id` is accepted for interface parity with the baseline adapters and
+        is echoed back rather than used to filter — one system instance holds one
+        trajectory in this harness.
+        """
+        self.finalize()
+        entities = {}
+        for schema in self._graph.entities.values():
+            slots = {}
+            for slot in schema.slots.values():
+                slots[slot.name] = {
+                    "current": slot.belief,
+                    "history": [{"value": v, "t": t} for v, t in slot.superseded],
+                    "exceptions": [{"value": o.value, "t": o.t,
+                                    "source_fact": o.source_fact} for o in slot.exceptions],
+                    "n_obs": len(slot.ledger),
+                }
+            entities[schema.entity] = slots
+        out = {"method": "schemamem", "entities": entities}
+        if traj_id is not None:
+            out["traj_id"] = traj_id
+        return out
+
     # ---- READ: render schema into context ----------------------------------
     def _render_entity(self, schema) -> str:
         lines = [f"Entity: {schema.entity}"]
