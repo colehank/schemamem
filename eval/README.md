@@ -60,8 +60,9 @@ stream-end version); switch them on for the corresponding ablations.
 - **LongMemEval-s** (full 6 question types) — the *knowledge-update* axis; the temporal
   short-side is reported honestly rather than hidden.
 - **MemoryAgentBench / Conflict_Resolution / FactConsolidation** (SH-6k + MH-6k) — the
-  *change-detection* axis; SH-6k is where headroom is largest (best-in-class ~54%, most
-  systems in the teens or lower).
+  *change-detection* axis. SH-6k is where the largest headroom is expected on this benchmark;
+  the specific per-system numbers should be cited from the MAB paper directly when written into
+  the final paper (do not copy leaderboard figures from memory).
 - **MemBench / noisy** — the *isolated-exception* axis; the `protect-as-exception` outcome
   is what other systems structurally cannot produce.
 
