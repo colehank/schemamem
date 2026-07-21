@@ -228,7 +228,8 @@ $$L(\text{stream}\mid S)=\underbrace{L(S)}_{\text{图式本身}}+\sum_x \underbr
 ### 5.1 设置
 
 - **基准(三个,按能力轴选)**:
-  - **LongMemEval-s**(全 6 个 question type,500 题):knowledge-update=78、temporal=133、multi-session=133、single-session-user=70、single-session-assistant=56、single-session-preference=30。走**更新轴**,并如实报告已知短板 temporal(不藏)。
+  - **LongMemEval-s**(全 6 个 question type,**300 题**):multi-session=75、temporal-reasoning=75、knowledge-update=45、single-session-user=45、single-session-assistant=30、single-session-preference=30。走**更新轴**,并如实报告已知短板 temporal(不藏)。
+    > **须在正文写明的口径**:我们评测的是 **MemoryAgentBench 打包的 LongMemEval-s 子集**(`longmemeval_s*`,300 题、5 个共享 context),而非官方发行版的 500 题。二者类型构成一致、比例接近(约 60% 子采样),但**绝对题数不同**。之所以用子集而非官方 500 题:官方版每个实例自带约 50 个 session 的独立 haystack,需 500 次独立记忆构建(实测约 12.7 分钟/次 → 单方法约 106 小时),四方法在投稿窗口内不可行;MAB 版把 haystack 合并为 5 个共享 context,300 题只需 5 次构建。**代价是 knowledge-update 只有 45 题,统计功效相应下降,置信区间须如实给出。**
   - **MemoryAgentBench / Conflict_Resolution / FactConsolidation**(SH-6k + MH-6k):走**改变检测轴**,是"冲突时该改信念"的直接靶子,已有 headroom 大(见 §2.5)。
   - **MemBench / noisy**(500 traj):走**例外保护轴**,是我们独有的第三种结局("受保护例外")专属舞台;别的方法结构上无法在此表达。
   - **LoCoMo**(gpt-4o-mini 已跑通)作为**覆盖面旁证**,不入主结果表。
@@ -241,7 +242,7 @@ $$L(\text{stream}\mid S)=\underbrace{L(S)}_{\text{图式本身}}+\sum_x \underbr
 
 按能力轴组织,每轴一张表。所有数字均为**远端 vLLM 统一底座**(Qwen3-8B chat / Qwen3-Embedding-4B embed)下的准确率。
 
-**表 1:更新轴 —— LongMemEval-s(全 6 类,500 题)**
+**表 1:更新轴 —— LongMemEval-s(MAB 子集,全 6 类,300 题)**
 
 | 方法 | knowledge-update | temporal | multi-session | ss-user | ss-assistant | ss-preference | 全集平均 |
 |---|---|---|---|---|---|---|---|

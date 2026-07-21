@@ -169,7 +169,11 @@ calls is `add_chunk` / `retrieve_with_source_groups` / `ask_with_retrieved_conte
 
 **AAAI-27 main table (three benchmarks, evolution-axis targeted)**:
 
-- **LongMemEval-s** (full 6 question types, 500 questions) — the update axis + honest report of
+- **LongMemEval-s** — the update axis + honest report of the temporal short-side. NOTE: we run the
+  **MemoryAgentBench-packaged subset** (`longmemeval_s*`): 300 questions over 5 SHARED contexts, not
+  the official 500. The official release gives each instance its own ~50-session haystack, i.e. 500
+  separate memory builds (~12.7 min each measured) — infeasible for 4 methods in the window. Type mix
+  is proportional; knowledge-update is 45, not 78. Do not cite 500/78 for what we actually ran.
   the temporal short-side.
 - **MemoryAgentBench / Conflict_Resolution / FactConsolidation** — both single-hop (SH) and
   multi-hop (MH), 6k context tier. This is the change-detection axis.

@@ -14,7 +14,7 @@
 | 轴 | 定义 | benchmark 抓手 | 主要对标 |
 |---|---|---|---|
 | **A. 改变检测** | 冲突时正确改信念 | MAB FactConsolidation SH-6k | Mem0(SH 原报告 18%) |
-| **B. 知识更新** | 用户属性演化 | LongMemEval-s knowledge-update(78 题) | Mem0、A-MEM |
+| **B. 知识更新** | 用户属性演化 | LongMemEval-s knowledge-update(**MAB 子集 45 题**;官方 78 题版每实例独立 haystack,500 次构建不可行) | Mem0、A-MEM |
 | **C. 例外保留** | 孤立冲突留作 protect-as-exception | MemBench noisy | 三 baseline 都缺此能力 |
 
 **兜底论证**(即使数字差,也必须站住):C 轴上 SchemaMem 结构性独有——`Slot.superseded` 演化链 + `Slot.exceptions` 例外层是别的方法**无法表达**的。
