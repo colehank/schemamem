@@ -98,8 +98,13 @@ raise it, don't drift into it.
    `"not_vegetarian"`. Negations let unrelated deviations merge and mix exceptions with real change.
 4. **Do NOT decompose a belief into its parts during extraction.** "strict vegetarian (no meat/eggs/
    dairy)" is ONE assertion, not four.
-5. **`pred_error` is a 3-class scheme: 0.0 (consistent) / 1.0 (conflict) / drop (irrelevant, no
-   assertion).** No intermediate values (no 0.5). This has been reverted once already — keep it binary.
+5. **Arbitration is binary on `pred_error`.** The L2 extractor emits three labels — 0.0 (consistent),
+   1.0 (conflict), 0.5 (partial: related but neither a clean match nor a clear contradiction), plus
+   *drop* for irrelevant material. Only 1.0 opens a candidate and enters the cross-episode vote;
+   0.0 confirms the belief; 0.5 is recorded in the ledger as a weak signal only — never a candidate,
+   never counted toward accommodation (`candidate_id` MUST be null for 0.0 and 0.5, per prompts.py).
+   The vote itself has been kept binary since the last revert — do not let 0.5 leak into candidate
+   creation or counting.
 6. **The graph is a flat attributed graph, not an abstraction pyramid.** We deliberately avoid
    MemTree/reflection-style bottom-raw→top-summary hierarchies, because abstraction is exactly what
    smooths exceptions away.
@@ -109,8 +114,15 @@ raise it, don't drift into it.
    not "improve" single-hop by leaking schema context into it.
 8. **Result claims are conservative: "competitive", accuracy-only.** Token-efficiency was dropped as
    a selling point (needs separate experiments). Don't reintroduce token/latency claims without the user.
-9. **`online_decay` and `enable_forgetting` (ε) are OFF by default** — main runs use the simple
-   stream-end version; these are ablation modes.
+9. **Library defaults vs paper main-result config.** `online_decay` and `enable_forgetting` (ε)
+   are OFF by default *at the library level* — the safe library behavior is no forgetting, no online
+   decay. **But the paper's main-result configuration turns `enable_forgetting` ON**:
+   reconstruction-gated forgetting is a first-class contribution (§5.3 in `docs/design/full_paper_zh.md`)
+   and the main results report it engaged. `online_decay` remains an ablation in both library and
+   paper. When someone reads the eval harness config, `enable_forgetting: True` is expected for the
+   main table; when they read `SchemaMemorySystem()` with no kwargs, `enable_forgetting=False` is
+   expected. Both are correct; they are answering different questions ("safe default" vs "the
+   configuration under which the paper's main-table numbers were produced").
 
 ## Prompt invariants
 
