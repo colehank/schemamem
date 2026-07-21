@@ -44,6 +44,13 @@ RULES:
   too, do not skip a turn just because the assistant spoke it. The confirmed value is the fact.
 - Third parties count. If the user mentions someone else ("my friend Rachel just moved to the
   suburbs"), emit a fact whose SUBJECT is that third party (Rachel), not the user.
+- NARRATIVE / NON-DIALOGUE INPUT: if the chunk is not a conversation but a declarative statement
+  about the world (e.g. "Hines Ward plays the position of wide receiver.", "The capital of Romania
+  is Bucharest."), there is no speaker to bind to — SUBJECT is the entity the sentence is about
+  (the grammatical subject or, in "The X of Y is Z" constructions, Y). For "Hines Ward plays wide
+  receiver" the subject is "Hines Ward"; for "The chairperson of Fatah is Mahmoud Abbas" the
+  subject is "Fatah" (the entity whose attribute is being asserted), not the person named as the
+  value. Ignore the `speakers` hint in this case.
 - CONSOLIDATE, do not enumerate. If several utterances speak to the SAME attribute of the same
   subject, emit ONE fact for that attribute, not one per utterance. E.g. many remarks about painting
   a sunset, drawing flowers, and art bringing joy → one fact like "Caroline enjoys visual art
