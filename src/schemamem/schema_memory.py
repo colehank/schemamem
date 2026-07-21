@@ -173,12 +173,30 @@ class SchemaMemorySystem:
 
     # ---- LLM helpers (each a single call; mockable) ------------------------
     def _chat(self, system: str, user: str, max_tokens: int = 400, temperature: float = 0.0) -> str:
-        r = self._client.chat.completions.create(
-            model=self.model,
-            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
-            temperature=temperature, max_tokens=max_tokens,
-        )
-        return r.choices[0].message.content or ""
+        """One chat call, retried on transient gateway failures.
+
+        A shared gateway returns 5xx / rate-limit errors under load (a 503
+        'no available channel' burst killed several hour-long runs), and an
+        unhandled one propagates out of add_chunk and loses the whole run.
+        Back off and retry; only give up after the last attempt.
+        """
+        import time
+        last = None
+        for attempt in range(5):
+            try:
+                r = self._client.chat.completions.create(
+                    model=self.model,
+                    messages=[{"role": "system", "content": system},
+                              {"role": "user", "content": user}],
+                    temperature=temperature, max_tokens=max_tokens,
+                )
+                return r.choices[0].message.content or ""
+            except Exception as e:                       # noqa: BLE001 - gateway-agnostic
+                last = e
+                if attempt == 4:
+                    break
+                time.sleep(2 ** attempt)                 # 1, 2, 4, 8s
+        raise last
 
     def _embed(self, text: str):
         """Embed one string via the OpenAI-compatible embeddings endpoint, cached.

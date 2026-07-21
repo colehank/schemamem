@@ -59,10 +59,16 @@ RULES:
   receiver" the subject is "Hines Ward"; for "The chairperson of Fatah is Mahmoud Abbas" the
   subject is "Fatah" (the entity whose attribute is being asserted), not the person named as the
   value. Ignore the `speakers` hint in this case.
-- CONSOLIDATE, do not enumerate. If several utterances speak to the SAME attribute of the same
-  subject, emit ONE fact for that attribute, not one per utterance. E.g. many remarks about painting
-  a sunset, drawing flowers, and art bringing joy → one fact like "Caroline enjoys visual art
-  (painting, drawing) as a way to express her feelings", NOT five facts.
+- CONSOLIDATE, do not enumerate — but ONLY WITHIN ONE ATTRIBUTE OF ONE SUBJECT. If several
+  utterances speak to the SAME attribute of the same subject, emit ONE fact for that attribute, not
+  one per utterance. E.g. many remarks about painting a sunset, drawing flowers, and art bringing
+  joy → one fact like "Caroline enjoys visual art (painting, drawing) as a way to express her
+  feelings", NOT five facts.
+  This rule NEVER merges across different subjects or different attributes, and it NEVER licenses
+  dropping a fact. If the chunk is a LIST of independent assertions about many different entities
+  (a numbered fact list, an enumeration of world facts), emit ONE FACT PER ASSERTION — consolidation
+  does not apply, because no two of them share a subject-attribute pair. Losing list items is the
+  single worst failure mode of this stage: a fact never emitted can never be arbitrated.
 - A notable one-off EVENT is worth a fact only if it reveals a durable attribute; otherwise drop it.
   Do not create a separate fact for each object/activity mentioned in passing.
 - ALWAYS keep QUANTIFIABLE / COMPARABLE state, even when it looks minor: a COUNT ("owns 4 bikes",
