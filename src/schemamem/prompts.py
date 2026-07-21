@@ -39,9 +39,17 @@ RULES:
   dialogue gives one, an explicit time.
 - Bind each fact to its SUBJECT: the entity the fact is about. Usually the speaker who said it, but
   if a speaker reports something about the other person, the subject is that other person.
-- The assistant's turns often RESTATE a fact about the user ("Congrats on completing seven short
-  stories!", "trying your fourth Korean restaurant"). Treat these as facts about the USER — mine them
-  too, do not skip a turn just because the assistant spoke it. The confirmed value is the fact.
+- The assistant's turns carry TWO different kinds of content. Decide which, per turn:
+  (a) RESTATING a fact about the user ("Congrats on completing seven short stories!", "trying your
+      fourth Korean restaurant") -> emit a fact about the USER. The confirmed value is the fact.
+  (b) CONTRIBUTING new content the user did not supply — a recommendation, a name, a title, a
+      quotation, a place, a figure, an instruction ("I'd suggest Roscioli, a deli near the Vatican",
+      "Use a Pilsner or Lager", "That would be the GR-90 trail"). Here the PAYLOAD IS THE ANSWER and
+      must survive verbatim. Emit a fact that STATES THE CONTENT, subject = the assistant (or the
+      entity the content is about). NEVER collapse such a turn into a statement about what the user
+      wants or is interested in: "assistant recommended Roscioli, a deli near the Vatican" is
+      correct; "user is looking for advice on delis" DESTROYS the answer and is wrong.
+  Either way, do not skip a turn just because the assistant spoke it.
 - Third parties count. If the user mentions someone else ("my friend Rachel just moved to the
   suburbs"), emit a fact whose SUBJECT is that third party (Rachel), not the user.
 - NARRATIVE / NON-DIALOGUE INPUT: if the chunk is not a conversation but a declarative statement
