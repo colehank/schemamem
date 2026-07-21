@@ -53,9 +53,12 @@ src/schemamem/
   schema_memory.py  # SchemaMemorySystem — LLM ingestion + query rendering; the public API + eval contract
   __init__.py       # public exports
 tests/              # test_core.py (routing, no LLM) + test_system.py (adapter contract, mock LLM)
+                    # + test_bench_adapters.py (FC subject parser, pure-Python)
 examples/           # diet_dialogue.py — offline end-to-end demo, no API key
 eval/               # MemoryData benchmark adapter + config + integration guide (see eval/README.md)
+docs/CONFIGURATION.md   # LLM / embedding endpoint setup
 docs/design/        # LIVING design docs — the science. Not frozen.
+docs/eval/          # LIVING eval docs — benchmark catalog + AAAI-27 experiment plan
 docs/               # method_architecture.png
 ```
 
@@ -111,9 +114,23 @@ Everything goes through [uv](https://docs.astral.sh/uv/). Do not use bare `pip`/
 
 ```bash
 uv sync                            # create .venv + install (runtime + dev)
-uv run pytest                      # full test suite (must stay green: 9 core + 2 system)
+uv run pytest                      # full test suite (must stay green:
+                                   #   13 core routing + 5 bench_adapters + 2 system = 20 total)
 uv run ruff check .                # lint
 uv run examples/diet_dialogue.py   # offline end-to-end sanity check
+```
+
+If pytest isn't installed in the active env, a stdlib fallback works — each test file's
+`test_*` functions can be run with plain `unittest`-style assertions:
+
+```bash
+PYTHONPATH=src:tests python -c "
+import test_core as m, inspect
+for n, f in inspect.getmembers(m, inspect.isfunction):
+    if n.startswith('test_'):
+        try: f(); print(f'PASS {n}')
+        except AssertionError as e: print(f'FAIL {n}: {e}')
+"
 ```
 
 Add a dependency with `uv add <pkg>` (runtime) or `uv add --dev <pkg>` (dev); commit the updated
@@ -123,10 +140,27 @@ the LLM (via an OpenAI-compatible client).
 ## Evaluation
 
 Benchmarks run through the MemoryData harness on a remote GPU host (turing_pub), NOT locally.
-`eval/README.md` has the integration contract and steps. The three-method contract the harness calls
-is `add_chunk` / `retrieve_with_source_groups` / `ask_with_retrieved_context`, all on
-`SchemaMemorySystem`. Main table = LongMemEval + LoCoMo. Baselines are prepared in a separate track;
-integrating SchemaMem = vendoring `src/schemamem/*.py` into `methods/schemamem/source/schemamem/`.
+`eval/README.md` has the integration contract and steps. The three-method contract the harness
+calls is `add_chunk` / `retrieve_with_source_groups` / `ask_with_retrieved_context`, all on
+`SchemaMemorySystem`. Integrating SchemaMem = vendoring `src/schemamem/*.py` into
+`methods/schemamem/source/schemamem/`.
+
+**AAAI-27 main table (three benchmarks, evolution-axis targeted)**:
+
+- **LongMemEval-s** (full 6 question types, 500 questions) — the update axis + honest report of
+  the temporal short-side.
+- **MemoryAgentBench / Conflict_Resolution / FactConsolidation** — both single-hop (SH) and
+  multi-hop (MH), 6k context tier. This is the change-detection axis.
+- **MemBench / noisy** — the isolated-exception axis (`protect-as-exception` is our unique
+  third outcome; MemBench-noisy is where it earns its keep).
+
+LoCoMo is retained as a coverage sanity check (already-in-hand gpt-4o-mini numbers), not as a
+main-table benchmark.
+
+**Baselines are Mem0 / A-MEM / MemoryBank** — the three evolution-branch representatives
+(update / consolidation / forgetting). They are prepared in a separate session and integrated
+via the same harness. `docs/eval/evolution_comparison_plan.md` holds the current experiment
+plan (phase ordering, matrix ledger, handoff format).
 
 ## How we work (conventions)
 

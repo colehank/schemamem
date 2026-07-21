@@ -69,7 +69,8 @@ run-dependent), so its real-data effect is visible only on runs that do catch a 
 
 - Core tests: `test_slot_judge_merges_same_attribute_not_same_topic` (LLM path),
   `test_slot_merge_routes_near_duplicate_into_existing_slot` (embedding path),
-  `test_paraphrase_guard_reinforces_instead_of_superseding`. Suite 15/15.
+  `test_paraphrase_guard_reinforces_instead_of_superseding`. Full suite:
+  13 core routing + 5 bench_adapters + 2 system contract = 20/20.
 - Defaults: slot-merge OFF; when on, `slot_merge_mode="llm"` (same-attribute judge, the
   signal that fixed the topic-vs-attribute confusion embeddings could not). Paraphrase-guard ON.
 - Open: the LLM judge is precise but conservative (low merge recall) — tuning it toward more

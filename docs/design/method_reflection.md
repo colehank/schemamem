@@ -159,13 +159,13 @@ Slot = 断言列 assertions: [(value, episode, r, t)]
 
 ## 落到实现:相对当前 `core.py` 的具体改动清单
 
-1. **删** `Slot.belief`(裸串)/ `won_lines` / 独立 `candidates` dict;**立** `Slot.assertions` 单一真相源 + 派生视图属性。(迭代 1、11)
-2. **k 的语义**:文档/代码注释写成"可识别性下界=2,顺应阈= max(2, ⌈S/r̄⌉)";把 S 与 r̄ 作为显式可扫描参数。(迭代 2、10)
-3. **PROTECT**:主版保留流末扫描 + 正当化延迟语义;加"衰减支持"作全在线消融开关。(迭代 6)
-4. **DISSOLVE**:实现残差低端阈,作为与 PROTECT 对称的镜像;不进主实验声明。(迭代 7)
-5. **查询渲染**:例外带时间戳与信念并列输出,作为查询期证据。(迭代 5)
-6. **价值度量**:加一个 `schema.bits_saved()` 估计量(用 LLM surprise 近似残差码长),把"价值"变成可报的数。(迭代 9)
-7. **鲁棒性消融**:归并错误率 → 端到端影响,列为必做。(迭代 8)
+1. **删** `Slot.belief`(裸串)/ `won_lines` / 独立 `candidates` dict;**立** `Slot.assertions` 单一真相源 + 派生视图属性。(迭代 1、11)—— 部分落地:当前 `Slot` 是 `belief + superseded + exceptions + ledger + candidates + won_lines` 的组合;`ledger` 就是单一真相源,belief/superseded/exceptions 事实上是它的视图。全面重构成\"仅 assertions + 派生 property\"未做(会牵动很多下游),纯文档层可以先把\"ledger 是真相源\"的语义写清。
+2. ✅ **k 的语义**:`core.py` 里 `k` 已命名为 `min_evidence_count`,docstring 写明\"可识别性下界=2\";MDL 阈值 `max(2, ⌈S/r̄⌉)` 是理论表述,`S`/`r̄` 未在代码中显式扫描——留作后续 ablation。(迭代 2、10)
+3. **PROTECT**:主版保留流末扫描 + 正当化延迟语义;`online_decay=True` 已实现为在线衰减 ablation。(迭代 6)
+4. **DISSOLVE**:`enable_forgetting=True` + `reconstruction_tolerance` 已实现,默认关闭作消融。(迭代 7)
+5. ✅ **查询渲染**:`retrieve_with_source_groups` 与 `_render_slot_dual` 已把\"当前信念 + superseded 链 + exceptions\"作为查询期上下文一并渲染。(迭代 5)
+6. **价值度量**:`schema.bits_saved()` **未实现**——保留在待办;若做,用 LLM surprise 近似残差码长。(迭代 9)
+7. **鲁棒性消融**:归并错误率 → 端到端影响,尚未系统消融;`enable_slot_merge` 默认关的动机来自 LoCoMo 上的错并观察(见 `slot_canonicalization.md`)。(迭代 8)
 
 **未决(留给用户回来定)——只有两处是真岔路,其余都可直接做:**
 - (a) PROTECT 主版走"流末扫描 B"还是"衰减在线 A"?我建议 B 主 / A 消融。

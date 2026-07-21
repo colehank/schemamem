@@ -6,6 +6,12 @@ the schema it produces. This is *not* a benchmark score — it is "what does the
 actually look like on real dialogue". Reproduce with `examples/locomo_probe.py`.
 Snapshot of the output: `examples/outputs/locomo_sample0_schema.json`.
 
+> **Related qualitative probes on the other two AAAI-27 benchmarks** — MAB FactConsolidation
+> SH-6k (60-fact slice, 2/2 target conflicts correctly evolved into `superseded` trails) and
+> MemBench-noisy (traj0, 9 entities × 84 slots, one real belief evolution captured) — are
+> saved as artifacts and summarized in the experiment ledger at
+> `docs/eval/evolution_comparison_plan.md` §5. This file focuses on LoCoMo.
+
 ## What worked
 
 - **Two real belief evolutions were captured**, with a superseded trail dated to when
@@ -65,7 +71,8 @@ concurrently and keeps L2/L3 sequential.
 
 Attribution is the clear win: bound at L1, Melanie's painting/family facts stay on Melanie and
 Caroline's support-group/career facts stay on Caroline — no cross-entity bleed in these runs.
-Runtime for the 19-session conversation: ~132 s serial → ~81 s with parallel L1.
+Runtime for the 19-session conversation: ~132 s serial → ~72–81 s with parallel L1
+(measured across two runs; LLM latency varies).
 
 Slot fragmentation improved but is **not** fully solved, and counts vary run to run (LLM
 nondeterminism — including whether a given evolution gets caught). The saved snapshot

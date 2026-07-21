@@ -55,6 +55,24 @@ stream-end version); switch them on for the corresponding ablations.
 
 ## Main table scope
 
-Core comparison: **LongMemEval + LoCoMo**; LongBench / MemBench are extensions.
-Cross-paradigm baselines already prepared in the harness cover reference (Long Context,
-Embedding RAG), structural (Mem0), topological (GraphRAG) and hybrid (A-MEM).
+**AAAI-27 main comparison (three benchmarks, each targeting one evolution axis)**:
+
+- **LongMemEval-s** (full 6 question types) — the *knowledge-update* axis; the temporal
+  short-side is reported honestly rather than hidden.
+- **MemoryAgentBench / Conflict_Resolution / FactConsolidation** (SH-6k + MH-6k) — the
+  *change-detection* axis; SH-6k is where headroom is largest (best-in-class ~54%, most
+  systems in the teens or lower).
+- **MemBench / noisy** — the *isolated-exception* axis; the `protect-as-exception` outcome
+  is what other systems structurally cannot produce.
+
+**LoCoMo** is a coverage sanity check (gpt-4o-mini numbers already in hand), not a main-table
+entry.
+
+**Baselines** are the three evolution-branch representatives: **Mem0** (update),
+**A-MEM** (consolidation/associative organization), **MemoryBank** (Ebbinghaus-style
+forgetting). They are prepared in a separate session and integrated via the same
+`methods/<name>/` + `config/hybrid_<name>.yaml` pattern as SchemaMem.
+
+For the current experiment plan (phase ordering, matrix ledger, handoff format), see
+`docs/eval/evolution_comparison_plan.md` in the repo root. Full per-benchmark data-shape
+inventory (sub_datasets, config paths, wiring status) is in `docs/eval/benchmark_catalog.md`.

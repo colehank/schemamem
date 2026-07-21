@@ -1,6 +1,12 @@
-# SchemaMem — AAAI-27 Abstract & Title (Submission Draft v5)
+# SchemaMem — AAAI-27 Abstract & Title (Submission Draft v5, archival)
 
-> Target: AAAI-27 Main Technical Track. Abstract due 2026-07-21 (AoE). **AAAI abstract limit: 150–250 words** — primary is now 237 words, short variant ~216 words; both compliant. LOAD-BEARING THESIS: the three memory-evolution mechanisms (consolidation/updating/forgetting) share ONE defect — none carries an expectation, so each decides by a surface proxy instead of an observation's violation of the expectation (residual). Schema supplies the expectation → residual computable → one signal arbitrates all three. Integration is a byproduct, not a selling point; protected exception is the EXISTENCE PROOF arbitration is happening. Result claim: conservative ("competitive"), accuracy-only.
+> **Status (2026-07-21).** The user has taken over abstract authoring for submission
+> ("摘要你不用管了，我来写"). This file is preserved as the drafting history that fed
+> that decision — the registered abstract is whatever the user submits to OpenReview,
+> which supersedes both variants below.
+>
+> Target: AAAI-27 Main Technical Track. Abstract due **2026-07-22 (AoE)**. **AAAI abstract
+> limit: 150–250 words** — primary is 237 words, short variant ~216 words; both compliant. LOAD-BEARING THESIS: the three memory-evolution mechanisms (consolidation/updating/forgetting) share ONE defect — none carries an expectation, so each decides by a surface proxy instead of an observation's violation of the expectation (residual). Schema supplies the expectation → residual computable → one signal arbitrates all three. Integration is a byproduct, not a selling point; protected exception is the EXISTENCE PROOF arbitration is happening. Result claim: conservative ("competitive"), accuracy-only.
 
 ---
 
