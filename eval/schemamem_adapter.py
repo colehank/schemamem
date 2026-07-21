@@ -66,6 +66,9 @@ class SchemaMemAdapter:
         # did — set l1_window_chars=0 to disable windowing and measure the difference.
         l1_window_chars: int = 4000,
         l1_quant_samples: int = 1,
+        # characters of raw episode text appended after the schema gist;
+        # 0 = schema-only context (pre-dual-store behaviour)
+        verbatim_budget: int = 24000,
         **extra_kwargs,
     ) -> None:
         self.model = model
@@ -80,6 +83,7 @@ class SchemaMemAdapter:
         self.min_evidence_count = int(min_evidence_count)
         self.l1_window_chars = int(l1_window_chars)
         self.l1_quant_samples = int(l1_quant_samples)
+        self.verbatim_budget = int(verbatim_budget)
 
         # LLM client for answering (OpenAI-compatible: points at local vLLM 9908).
         self._client = OpenAI(api_key=api_key or "EMPTY", base_url=api_base)
@@ -98,6 +102,7 @@ class SchemaMemAdapter:
                 min_evidence_count=self.min_evidence_count,
                 l1_window_chars=self.l1_window_chars,
                 l1_quant_samples=self.l1_quant_samples,
+                verbatim_budget=self.verbatim_budget,
                 state_path=state_path,
             )
         else:

@@ -118,3 +118,32 @@ def test_dump_memory_exposes_all_four_fields():
     assert [h["value"] for h in diet["history"]] == ["strict vegetarian"], diet
     assert [e["value"] for e in diet["exceptions"]] == ["ate meat"], diet
     assert diet["n_obs"] == 5, diet
+
+
+def test_verbatim_layer_survives_lossy_extraction():
+    """The schema INDEXES the raw episodes rather than replacing them.
+
+    L1 facts are an LLM rewrite, so a detail the extractor drops is gone from the
+    structured layer. Retrieval must still surface the original chunk text, in
+    slot-rank order, so the answerer can recover it."""
+    sm = SchemaMemorySystem(model="mock", client=_Client(SCRIPTS), min_evidence_count=2)
+    for m in MSGS:
+        sm.add_chunk(m)
+    ctx, _ = sm.retrieve_with_source_groups("diet")
+    assert "SOURCE EPISODES" in ctx, ctx
+    # the raw wording is present even though no extracted slot value contains it
+    assert "couldn't resist" not in ctx      # that phrasing is only in the example, not here
+    assert "I'm a strict vegetarian" in ctx, ctx
+    assert "salmon salad today" in ctx, ctx
+    # gist still leads
+    assert ctx.index("current: pescatarian") < ctx.index("SOURCE EPISODES")
+
+
+def test_verbatim_budget_zero_restores_schema_only_context():
+    sm = SchemaMemorySystem(model="mock", client=_Client(SCRIPTS),
+                            min_evidence_count=2, verbatim_budget=0)
+    for m in MSGS:
+        sm.add_chunk(m)
+    ctx, _ = sm.retrieve_with_source_groups("diet")
+    assert "SOURCE EPISODES" not in ctx
+    assert "current: pescatarian" in ctx

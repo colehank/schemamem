@@ -81,6 +81,9 @@ class SchemaMemorySystem:
         retrieve_k: int = 10,
         embedding_model: str = "Qwen3-Embedding-4B",
         embed_batch: int = 256,          # inputs per embeddings request (query-time ranking)
+        # Characters of raw episode text appended after the schema gist at query
+        # time. 0 disables the verbatim layer (schema-only, the previous behaviour).
+        verbatim_budget: int = 24000,
         embedding_provider: Optional[str] = None,
         embedding_api_key: Optional[str] = None,
         embedding_api_base: Optional[str] = None,
@@ -117,6 +120,7 @@ class SchemaMemorySystem:
         self.embedding_model = embedding_model
         self._emb_cache: dict = {}
         self._embed_batch = int(embed_batch)
+        self.verbatim_budget = int(verbatim_budget)
         self.state_path = state_path
 
         # LLM client (OpenAI-compatible). Injected in tests; otherwise built from
@@ -160,6 +164,12 @@ class SchemaMemorySystem:
         # running schema-state view fed back into the extraction prompt so the LLM
         # can reuse existing candidate ids / know the current belief.
         self._episode_counter = 0
+        # VERBATIM STORE: episode_id -> the raw chunk text, exactly as ingested.
+        # The schema is an INDEX over these episodes, not a replacement for them.
+        # L1 facts are an LLM rewrite and therefore already lossy; keeping the raw
+        # text means a detail dropped by extraction is still recoverable at answer
+        # time, and the "verbatim" half of the dual store is actually verbatim.
+        self._episodes: dict = {}
 
     # ---- LLM helpers (each a single call; mockable) ------------------------
     def _chat(self, system: str, user: str, max_tokens: int = 400, temperature: float = 0.0) -> str:
@@ -417,6 +427,7 @@ class SchemaMemorySystem:
         self._episode_counter += 1
         episode_id = f"ep{self._episode_counter}"
         t = timestamp or episode_id
+        self._episodes[episode_id] = (t, text)
         known = speakers or list(self._graph.entities.keys())
         facts = self._clean_to_facts(text, known)
         self._ingest_facts(facts, episode_id, t, known)
@@ -458,6 +469,7 @@ class SchemaMemorySystem:
         for (text, ts), facts in zip(norm, fact_lists):
             self._episode_counter += 1
             episode_id = f"ep{self._episode_counter}"
+            self._episodes[episode_id] = (ts or episode_id, text)
             self._ingest_facts(facts, episode_id, ts or episode_id, base_known)
 
     def finalize(self):
@@ -582,7 +594,41 @@ class SchemaMemorySystem:
             srcs = [o.source_fact for o in slot.ledger if o.source_fact]
             if srcs:
                 groups.append(srcs)
-        return "\n".join(blocks), groups
+        gist = "\n".join(blocks)
+
+        # VERBATIM LAYER — the schema names WHICH episodes matter; the episodes
+        # themselves supply the wording. Without this the answerer only ever sees
+        # an LLM rewrite of the source, so any detail L1 dropped is unrecoverable.
+        # Episodes are emitted in slot-rank order (best-matching slot first) and
+        # capped by verbatim_budget characters.
+        if self.verbatim_budget > 0 and self._episodes:
+            seen, chosen = set(), []
+            for _, slot in ranked:
+                for o in slot.ledger:
+                    ep = o.episode_id
+                    if ep in seen or ep not in self._episodes:
+                        continue
+                    seen.add(ep)
+                    chosen.append(ep)
+            spent, verbatim = 0, []
+            for ep in chosen:
+                t, text = self._episodes[ep]
+                text = (text or "").strip()
+                if not text:
+                    continue
+                if spent + len(text) > self.verbatim_budget:
+                    room = self.verbatim_budget - spent
+                    if room < 200:            # not worth a fragment
+                        break
+                    text = text[:room] + " …"
+                verbatim.append(f"--- episode {ep} ({t}) ---\n{text}")
+                spent += len(text)
+                if spent >= self.verbatim_budget:
+                    break
+            if verbatim:
+                gist = (gist + "\n\nSOURCE EPISODES (verbatim, most relevant first):\n"
+                        + "\n".join(verbatim))
+        return gist, groups
 
     # ---- TIMELINE VIEW -----------------------------------------------------
     _TEMPORAL_HINTS = ("when", "before", "after", "first", "last", "earlier",
