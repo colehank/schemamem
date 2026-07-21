@@ -80,6 +80,7 @@ class SchemaMemorySystem:
         model: str,
         retrieve_k: int = 10,
         embedding_model: str = "Qwen3-Embedding-4B",
+        embed_batch: int = 256,          # inputs per embeddings request (query-time ranking)
         embedding_provider: Optional[str] = None,
         embedding_api_key: Optional[str] = None,
         embedding_api_base: Optional[str] = None,
@@ -115,6 +116,7 @@ class SchemaMemorySystem:
         self.slot_merge_mode = slot_merge_mode
         self.embedding_model = embedding_model
         self._emb_cache: dict = {}
+        self._embed_batch = int(embed_batch)
         self.state_path = state_path
 
         # LLM client (OpenAI-compatible). Injected in tests; otherwise built from
@@ -182,6 +184,32 @@ class SchemaMemorySystem:
             vec = None
         self._emb_cache[text] = vec
         return vec
+
+    def _embed_many(self, texts: list) -> list:
+        """Embed many strings in as few requests as possible, cached.
+
+        The embeddings endpoint takes a LIST input, so ranking N slots costs one
+        request instead of N. Ranking every slot one-at-a-time dominated query
+        latency (a few hundred slots => a few hundred sequential round trips).
+        Falls back to per-item `_embed` when a gateway rejects batch input, so
+        behaviour is unchanged wherever batching is unavailable.
+        """
+        norm = [(t or "").strip().lower() for t in texts]
+        missing = [t for t in dict.fromkeys(norm) if t not in self._emb_cache]
+        for i in range(0, len(missing), self._embed_batch):
+            batch = missing[i:i + self._embed_batch]
+            try:
+                r = self._client.embeddings.create(model=self.embedding_model, input=batch)
+                vecs = [d.embedding for d in sorted(r.data, key=lambda d: d.index)]
+            except Exception:
+                vecs = []
+            if len(vecs) == len(batch):
+                for t, v in zip(batch, vecs):
+                    self._emb_cache[t] = v
+            else:                            # batch unsupported/partial -> one at a time
+                for t in batch:
+                    self._embed(t)
+        return [self._emb_cache.get(t) for t in norm]
 
     def _similarity(self, a: str, b: str) -> float:
         """Cosine similarity in [0,1] between two short strings. 0.0 when embeddings
@@ -494,14 +522,21 @@ class SchemaMemorySystem:
 
         ranked = pairs
         try:
-            qv = self._embed(query)
+            # one batched request for the query + every slot descriptor, instead of
+            # one round trip per slot (which dominated query latency).
+            vecs = self._embed_many([query] + [descriptor(e, s) for e, s in pairs])
+            qv, slot_vecs = vecs[0], vecs[1:]
+            if qv is None:
+                raise ValueError("no query embedding")
             import math
             def cos(a, b):
+                if a is None or b is None:
+                    return 0.0
                 dot = sum(x * y for x, y in zip(a, b))
                 na = math.sqrt(sum(x * x for x in a))
                 nb = math.sqrt(sum(y * y for y in b))
                 return dot / (na * nb) if na and nb else 0.0
-            scored = [((e, s), cos(qv, self._embed(descriptor(e, s)))) for e, s in pairs]
+            scored = [(p, cos(qv, sv)) for p, sv in zip(pairs, slot_vecs)]
             scored.sort(key=lambda z: z[1], reverse=True)
             ranked = [p for p, _ in scored[:k]]
         except Exception:
