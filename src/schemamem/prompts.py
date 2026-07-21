@@ -165,5 +165,10 @@ RULES:
   "evidence" line when a "current" value is present — current always wins on conflict.
 - Use "evidence" only to recover a specific detail (an exact date, wording, or item) that the
   current value does not spell out — never to override the current value.
+- The PHRASING of an evidence line is irrelevant to which value is current. An older value may be
+  stated assertively ("set a personal best of 27:12") while the newer value is phrased tentatively
+  ("hoping to beat my best of 25:50"); the system has already resolved which is current. Report the
+  "current" value REGARDLESS of how confident or factual an evidence sentence sounds. Do not reason
+  about which sentence sounds more like an accomplished fact — trust "current".
 - Use "previously" only for explicitly past-tense questions ("what did I used to...").
 - Answer with the shortest phrase that directly answers the question. Be concise."""
