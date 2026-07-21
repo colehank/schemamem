@@ -86,7 +86,8 @@ class SchemaMemorySystem:
         change_threshold: float = 0.5,
         reconstruction_tolerance: float = 0.15,
         min_evidence_count: int = 2,
-        l1_quant_samples: int = 3,
+        l1_quant_samples: int = 1,
+        l1_window_chars: int = 4000,
         online_decay: bool = False,
         decay_window: int = 3,
         enable_forgetting: bool = False,
@@ -104,6 +105,7 @@ class SchemaMemorySystem:
         self.reconstruction_tolerance = float(reconstruction_tolerance)
         self.min_evidence_count = int(min_evidence_count)
         self.l1_quant_samples = int(l1_quant_samples)
+        self.l1_window_chars = int(l1_window_chars)
         self.online_decay = bool(online_decay)
         self.decay_window = int(decay_window)
         self.enable_forgetting = bool(enable_forgetting)
@@ -249,33 +251,57 @@ class SchemaMemorySystem:
         """L1 stage: rewrite a raw dialogue chunk into subject-bound self-contained
         facts. Returns [{"subject": <entity>, "text": <fact>}, ...]."""
         hint = f"PARTICIPANTS (use these exact names as subjects): {known}\n" if known else ""
-        user = f"{hint}RAW DIALOGUE (one episode):\n{text}\n\nJSON:"
-        # Two orthogonal L1 passes: (a) topical/trait facts, (b) quantifiable STATE
-        # (counts/amounts/frequencies/durations/locations). A single pass lets the
-        # model's attention be captured by topical detail and drop the scalar value
-        # that is exactly what evolves and gets asked about. The quant pass targets
-        # those values explicitly; the two fact sets are merged (dedup) downstream.
         facts, seen = [], set()
-        # (topical pass once) + (quant pass sampled N times, union). The quant value
-        # (a count/amount) is the flaky one: a single LLM call surfaces it only
-        # sometimes. Recall-union over a few short samples turns an unreliable single
-        # extraction into a stable one — recall of a durable value is monotone under
-        # union (a value seen in ANY sample is kept), and dedup keeps the set clean.
-        passes = [(CLEAN_SYS, 1200, 1)] + [(QUANT_SYS, 500, self.l1_quant_samples)]
-        for sys_prompt, mt, n in passes:
-            for _ in range(n):
-                parsed = _extract_json(self._chat(sys_prompt, user, max_tokens=mt), key="facts")
-                for f in parsed.get("facts", []):
-                    ftext = (f.get("text") or "").strip()
-                    if not ftext:
-                        continue
-                    key = ftext.lower()
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    subject = self._clean_entity(f.get("subject"), known=known)
-                    facts.append({"subject": subject, "text": ftext})
+
+        def run_pass(sys_prompt, mt, segment):
+            u = f"{hint}RAW DIALOGUE (one episode):\n{segment}\n\nJSON:"
+            parsed = _extract_json(self._chat(sys_prompt, u, max_tokens=mt), key="facts")
+            for f in parsed.get("facts", []):
+                ftext = (f.get("text") or "").strip()
+                if not ftext:
+                    continue
+                key = ftext.lower()
+                if key in seen:
+                    continue
+                seen.add(key)
+                facts.append({"subject": self._clean_entity(f.get("subject"), known=known),
+                              "text": ftext})
+
+        # Two orthogonal L1 passes over the episode:
+        #   (a) CLEAN topical/trait pass — run ONCE on the whole episode, because
+        #       consolidating "the same attribute" needs a view of the whole chunk.
+        #   (b) QUANT quantifiable-state pass — run over sliding WINDOWS of the episode.
+        #       A scalar value (a count/amount) buried in the middle of a long chunk is
+        #       under-recalled by a single pass whose attention is captured by topical
+        #       detail; shortening the context each pass sees restores recall. Recall of
+        #       a durable value is monotone under the union of windows (a value seen in
+        #       ANY window is kept), and dedup keeps the fact set clean.
+        run_pass(CLEAN_SYS, 1200, text)
+        for seg in self._l1_windows(text):
+            for _ in range(self.l1_quant_samples):
+                run_pass(QUANT_SYS, 500, seg)
         return facts
+
+    def _l1_windows(self, text: str) -> list:
+        """Split an episode into overlapping windows by turn boundaries so each QUANT
+        pass sees a short context. Returns [text] unchanged when windowing is disabled
+        (l1_window_chars <= 0) or the episode already fits in one window."""
+        w = self.l1_window_chars
+        if w <= 0 or len(text) <= w:
+            return [text]
+        lines = text.split("\n")
+        windows, cur, cur_len = [], [], 0
+        for ln in lines:
+            if cur and cur_len + len(ln) > w:
+                windows.append("\n".join(cur))
+                # 1-turn overlap so a value split across the boundary is not lost
+                cur = cur[-1:]
+                cur_len = sum(len(x) for x in cur)
+            cur.append(ln)
+            cur_len += len(ln)
+        if cur:
+            windows.append("\n".join(cur))
+        return windows
 
     @staticmethod
     def _coerce_str(v):
