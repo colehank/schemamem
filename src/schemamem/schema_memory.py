@@ -512,7 +512,71 @@ class SchemaMemorySystem:
                 groups.append(srcs)
         return "\n".join(blocks), groups
 
+    # ---- TIMELINE VIEW -----------------------------------------------------
+    _TEMPORAL_HINTS = ("when", "before", "after", "first", "last", "earlier",
+                       "later", "how long", "since", "until", "order", "date",
+                       "recent", "ago", "which came", "prior to", "following")
+
+    @staticmethod
+    def _parse_t(t: str):
+        """Best-effort parse of a timestamp string to a sortable key. Returns a
+        datetime, or None when unparseable. Handles the LoCoMo/LongMemEval forms
+        seen in the data (e.g. '2023/10/10 (Tue) 23:08', '2023-06-12')."""
+        import re as _re, datetime as _dt
+        if not t:
+            return None
+        m = _re.search(r"(\d{4})[/-](\d{1,2})[/-](\d{1,2})", str(t))
+        if not m:
+            return None
+        y, mo, d = (int(g) for g in m.groups())
+        hm = _re.search(r"(\d{1,2}):(\d{2})", str(t))
+        hh, mm = (int(hm.group(1)), int(hm.group(2))) if hm else (0, 0)
+        try:
+            return _dt.datetime(y, mo, d, hh, mm)
+        except ValueError:
+            return None
+
+    def timeline_view(self, k: Optional[int] = None) -> str:
+        """A SECOND view over the same observation history, organized by TIME
+        rather than by attribute. The per-slot belief view answers 'what is the
+        current value of X'; this view answers 'in what order did events happen'.
+        Every observation already carries a timestamp; we flatten observations
+        across all slots into one chronologically-sorted event line. This is a
+        derived view (no new storage, no new edges), not a separate memory.
+        Temporal reasoning is the one axis the attribute-organized schema
+        compresses away, and this view restores it on demand."""
+        self.finalize()
+        events = []
+        for sch in self._graph.entities.values():
+            for slot in sch.slots.values():
+                for o in slot.ledger:
+                    key = self._parse_t(o.t)
+                    label = (o.source_fact or f"{sch.entity} {slot.name.replace('_',' ')}: {o.value}").strip()
+                    events.append((key, o.t, label))
+        # keep only time-anchored events; sort chronologically (unparseable last)
+        dated = [e for e in events if e[0] is not None]
+        dated.sort(key=lambda e: e[0])
+        if k:
+            dated = dated[:k]
+        lines = [f"  ({t}) {label}" for _, t, label in dated]
+        return "Timeline (events in chronological order):\n" + "\n".join(lines) if lines else ""
+
+    def _is_temporal(self, query: str) -> bool:
+        q = query.lower()
+        return any(h in q for h in self._TEMPORAL_HINTS)
+
     # ---- ANSWER ------------------------------------------------------------
-    def ask_with_retrieved_context(self, query: str, context: str) -> str:
+    def ask_with_retrieved_context(self, query: str, context: str,
+                                   include_timeline: bool = False) -> str:
+        # timeline_view() is a valid second (time-organized) view, but a full
+        # chronological dump dilutes the context and hurt accuracy in an A/B on
+        # temporal instances (the failing cases were upstream extraction misses,
+        # not missing time order). It is therefore OFF by default and opt-in;
+        # a query-relevant timeline (filter events to the queried entity/slot
+        # before ordering) is the right form and is left as future work.
+        if include_timeline and self._is_temporal(query):
+            tl = self.timeline_view()
+            if tl:
+                context = f"{context}\n\n{tl}"
         user = f"Memory context:\n{context}\n\nQuestion: {query}\nAnswer:"
         return self._chat(ANSWER_SYS, user, max_tokens=256).strip()
