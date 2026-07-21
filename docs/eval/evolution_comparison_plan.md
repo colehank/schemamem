@@ -204,6 +204,58 @@ python main.py --agent_config config/schemamem_gpt4omini.yaml \
 
 ---
 
+## 5c. 首轮 LongMemEval 实测与两个结构性发现(2026-07-22)
+
+**跑法**:MAB 子集 300 题 / 5 个共享 context,四方法同口径(gpt-4o-mini + text-embedding-3-small,dmxapi)。
+**主口径**:LongMemEval 官方 LLM-as-Judge(`evaluation/longmemeval/`,judge=gpt-4o,纯后处理)。
+选它是在看到结果之前定的,理由有二:字符串指标给出互相矛盾的赢家;且 single-session-preference
+的 gold 是评分量规而非短答案,四方法在该类上恒为 0 —— 基准的 10% 不用 judge 就没有信号。
+
+| question type | SchemaMem | MemoryBank | A-MEM | Mem0 |
+|---|---|---|---|---|
+| knowledge-update | 34.9 | **60.5** | 48.8 | 32.6 |
+| single-session-assistant | 3.3 | **66.7** | 63.3 | 6.7 |
+| single-session-user | 34.1 | **61.0** | 48.8 | 17.1 |
+| temporal-reasoning | 17.8 | **30.1** | 27.4 | 24.7 |
+| abstention | 46.2 | 46.2 | **69.2** | 61.5 |
+| single-session-preference | 6.7 | **16.7** | 16.7 | 16.7 |
+| multi-session | **18.6** | 15.7 | 17.1 | 12.9 |
+| **总计** | **21.3** | **38.3** | 35.3 | 21.0 |
+
+**七类只赢一类,总分倒数第二,主打的 knowledge-update 输 25 个点。** 如实记录,不粉饰。
+
+### 发现一:上下文预算相差 42 倍,当前对比不成立
+
+| 方法 | 喂给答题模型的 input_len | judge |
+|---|---|---|
+| MemoryBank | **41,059** | 38.3% |
+| A-MEM | 10,744 | 35.3% |
+| Mem0 | 4,049 | 21.0% |
+| **SchemaMem** | **973** | 21.3% |
+
+**judge 准确率几乎完全按上下文大小排序。** MemoryBank 的 `max_context_chars: 60000` 等于
+"把相关内容全给模型";我们渲染 top-10 槽位仅约 973 token。
+
+这直接违反 `full_paper_zh.md` §5.1 承诺的「与各基线**同一检索骨架**」——**该承诺目前是假的**,
+必须在论文中兑现或撤回。把预算拉平不是调参求胜,是让对比成立。
+
+**但不能简单把预算灌满**:灌到 40k 我们就变成 Long Context,仲裁机制零贡献,赢了反而证伪自己的
+故事。正确的实验是**预算对齐下的比较**,并给出预算-准确率曲线:图式压缩若真有价值,应体现为
+**更高的每-token 信息效率**,即在相同预算下胜出。已启动 `retrieve_num` ∈ {10, 50, 200} 扫描。
+
+### 发现二:抽取有损,逐字块打败结构化制品
+
+MemoryBank 几乎不做 LLM 抽取(切块 + 嵌入 + 遗忘曲线),却在**知识更新**上领先 25 点。
+抽样核对显示我们的失败多为**标量值抽错**(gold `five` → 我们答 `Three`;gold `9 months` →
+`6 months`),而非仲裁错。这与 `full_paper_zh.md` §3.3 已引的旁证一致——
+"逐字块打败结构化制品,连知识更新类结构化都吃亏"——但论文当时只把它用作
+"例外须逐字留"的支持,**现在的数据表明它适用于整条管线**。
+
+已修的一个具体损失点:assistant 贡献型发言被 L1 改写为"用户对某事感兴趣",答案被销毁
+(ss-assistant 3.3% vs 66.7%,30 题)。修复见 commit 1b54c54,验证跑进行中。
+
+---
+
 ## 6. 环境与端点(必须统一)
 
 **本地开发端点**(gpt-4o-mini):
