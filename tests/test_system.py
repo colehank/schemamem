@@ -226,3 +226,34 @@ def test_entity_mention_matches_on_tokens_not_exact_string():
     # fallback — so check the grounding decision, not the fallback output.)
     ctx3, _ = sm.retrieve_with_source_groups("Steve Jobs was born where?", k=1)
     assert "San Francisco" in ctx3, ctx3
+
+
+def test_l2_splits_the_batch_when_extraction_yield_collapses():
+    """Asking the extractor not to drop items does not work — it returned ~7
+    assertions for 25 listed facts, so only 671 of 2,310 entities reached the
+    graph. A low yield now halves the batch and retries."""
+    class _Yield:
+        """Returns one assertion per call until the batch is small, then all of them."""
+        def __init__(self):
+            self.sizes = []
+
+        def create(self, **kw):
+            body = kw["messages"][-1]["content"]
+            n = body.count("\n- ")
+            self.sizes.append(n)
+            import re as _re
+            ids = _re.findall(r"- (\d+)\. Entity", body)
+            emit = ids if n <= 2 else ids[:1]   # collapse unless the batch is tiny
+            rows = ",".join(
+                '{"entity":"Entity%s","slot":"s","value":"v%s","pred_error":0.0,"candidate_id":null}' % (i, i)
+                for i in emit)
+            return _Resp('{"assertions":[%s]}' % rows)
+
+    chat = _Yield()
+    client = type("C", (), {"chat": type("X", (), {"completions": chat})()})()
+    sm = SchemaMemorySystem(model="mock", client=client, min_evidence_count=2)
+    facts = [{"subject": "", "text": f"{i}. Entity{i} was born in City{i}."} for i in range(8)]
+    sm._ingest_facts(facts, "ep1", "t1", [])
+    # it must have retried on progressively smaller batches, not accepted 1-of-8
+    assert max(chat.sizes) == 8 and min(chat.sizes) <= 2, chat.sizes
+    assert len(sm._graph.entities) >= 4, list(sm._graph.entities)

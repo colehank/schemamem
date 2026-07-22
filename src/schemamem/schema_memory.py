@@ -463,6 +463,21 @@ class SchemaMemorySystem:
             if parsed.get("assertions"):
                 break
 
+        # COVERAGE ENFORCEMENT. Asking the model not to drop items is not reliable:
+        # with the coverage rule in place it still returned ~7 assertions for 25
+        # listed facts, so only 671 of 2,310 FactConsolidation entities reached the
+        # graph. A fact that yields no assertion is an entity the system can never
+        # answer about, and nothing downstream can recover it. When the yield is
+        # far below the input count, halve the batch and retry — a shorter list is
+        # harder to summarise away — until batches of one, where dropping is
+        # unambiguous rather than a judgement call.
+        got = len(parsed.get("assertions", []))
+        if len(facts) > 1 and got < 0.6 * len(facts):
+            mid = len(facts) // 2
+            self._ingest_facts(facts[:mid], episode_id, t, known)
+            self._ingest_facts(facts[mid:], episode_id, t, known)
+            return
+
         for a in parsed.get("assertions", []):
             slot = a.get("slot")
             value = self._coerce_str(a.get("value"))
