@@ -273,3 +273,22 @@ def test_retrieval_keys_on_the_real_question_not_the_filler():
     # short plain questions are untouched
     assert SchemaMemorySystem._retrieval_key("Which sport is goaltender associated with?") \
         == "Which sport is goaltender associated with?"
+
+
+def test_permanent_gateway_rejection_skips_the_chunk_instead_of_killing_the_run():
+    """A content-filter 400 is the gateway's final answer; retrying it five times
+    and then raising lost an entire MemBench run over one prompt."""
+    class _Boom(Exception):
+        status_code = 400
+
+    class _Filtered:
+        calls = 0
+        def create(self, **kw):
+            _Filtered.calls += 1
+            raise _Boom("content_filter")
+
+    client = type("C", (), {"chat": type("X", (), {"completions": _Filtered()})()})()
+    sm = SchemaMemorySystem(model="mock", client=client, min_evidence_count=2)
+    assert sm._chat("sys", "user") == ""       # degrades, does not raise
+    assert _Filtered.calls == 1                # and does not burn retries on it
+    sm.add_chunk("some text that gets filtered")   # whole pipeline survives

@@ -186,7 +186,6 @@ class SchemaMemorySystem:
         Back off and retry; only give up after the last attempt.
         """
         import time
-        last = None
         for attempt in range(5):
             try:
                 r = self._client.chat.completions.create(
@@ -197,11 +196,17 @@ class SchemaMemorySystem:
                 )
                 return r.choices[0].message.content or ""
             except Exception as e:                       # noqa: BLE001 - gateway-agnostic
-                last = e
+                status = getattr(e, "status_code", None)
+                # A 4xx other than rate-limiting is the gateway's final answer —
+                # a content-filter rejection never succeeds on retry. Retrying it
+                # five times and then raising killed whole runs over one prompt.
+                # Degrade instead: this chunk contributes nothing, the run goes on.
+                if isinstance(status, int) and 400 <= status < 500 and status != 429:
+                    return ""
                 if attempt == 4:
-                    break
+                    return ""
                 time.sleep(2 ** attempt)                 # 1, 2, 4, 8s
-        raise last
+        return ""
 
     def _embed(self, text: str):
         """Embed one string via the OpenAI-compatible embeddings endpoint, cached.
