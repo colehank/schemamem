@@ -192,3 +192,16 @@ def test_entity_names_keep_their_dots():
     # the compound it actually guards against still splits
     assert ce("Caroline.adoption_goal") == "Caroline"
     assert ce("Hines Ward.position") == "Hines Ward"
+
+
+def test_schema_state_is_scoped_to_the_batch():
+    """L2's prompt carries current beliefs so it can score pred_error, but dumping
+    every entity does not scale — at ~800 entities the state JSON swamped the facts
+    and extraction coverage fell from 93% to 66%."""
+    sm = SchemaMemorySystem(model="mock", client=_Client([]), min_evidence_count=2)
+    for ent in ["Steve Jobs", "L. Ron Hubbard", "QuickTime"]:
+        sm._graph.ingest(Observation(entity=ent, slot="x", value="v", pred_error=0.0,
+                                     episode_id="ep1", t="t1", candidate_id=None))
+    assert set(sm._schema_state()) == {"Steve Jobs", "L. Ron Hubbard", "QuickTime"}
+    scoped = sm._schema_state(relevant_to="- QuickTime was developed by Apple Inc.")
+    assert set(scoped) == {"QuickTime"}, scoped

@@ -282,11 +282,23 @@ class SchemaMemorySystem:
         return out if 0 < len(out) <= 60 else candidate.observations[-1].value
 
     # ---- schema-state view for the extraction prompt -----------------------
-    def _schema_state(self) -> dict:
+    def _schema_state(self, relevant_to: Optional[str] = None) -> dict:
         # Nested {entity: {slot: {belief, candidates}}} so the model never sees a
         # flat "entity.slot" key it might copy back into the entity field.
+        #
+        # L2 needs current beliefs to score pred_error, but only for entities the
+        # batch actually mentions. Dumping the whole graph does not scale: by ~800
+        # entities the state JSON dwarfs the facts it is meant to contextualise, and
+        # measured extraction coverage fell from 93% to 66% as the graph grew.
+        # `relevant_to` (the batch's fact text) restricts it, so the prompt stays
+        # the same size however large the memory becomes.
+        hay = (relevant_to or "").lower()
         state = {}
         for schema in self._graph.entities.values():
+            if relevant_to is not None:
+                e = schema.entity.lower()
+                if len(e) < 3 or e not in hay:
+                    continue
             slots = {}
             for slot in schema.slots.values():
                 slots[slot.name] = {
@@ -426,7 +438,6 @@ class SchemaMemorySystem:
             for i in range(0, len(facts), self._l2_batch):
                 self._ingest_facts(facts[i:i + self._l2_batch], episode_id, t, known)
             return
-        state_json = json.dumps(self._schema_state(), ensure_ascii=False)
         # A fact with no subject is one L1 passed through verbatim (a declarative
         # list item). Do NOT invent one: the bracket tells L2 to use that exact
         # entity, and an empty subject normalises to "user", which would attribute
@@ -435,6 +446,8 @@ class SchemaMemorySystem:
         facts_block = "\n".join(
             (f"- [{f['subject']}] {f['text']}" if f.get("subject") else f"- {f['text']}")
             for f in facts)
+        state_json = json.dumps(self._schema_state(relevant_to=facts_block),
+                                ensure_ascii=False)
         hint = f"KNOWN ENTITIES (reuse these exact names): {known}\n" if known else ""
         user = (f"{hint}CURRENT SCHEMA (nested entity -> slot -> belief + open candidate keys):\n"
                 f"{state_json}\n\nFACTS (each prefixed with its subject entity in brackets — use "
