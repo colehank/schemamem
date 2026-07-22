@@ -640,6 +640,37 @@ class SchemaMemorySystem:
                     out.append(f"    - ({o.t}) {src}")
         return "\n".join(out)
 
+    # A query is not always a question. Benchmarks that model realistic input (and
+    # real users) bury the real request under conversational filler: MemBench-noisy
+    # prefixes several sentences of chatter, INCLUDING decoy questions, before "what
+    # I truly wanted to clarify is, <question>". Keying retrieval on the whole string
+    # lets the filler drive both the embedding and the entity grounding, so the
+    # ranked slots answer the chatter rather than the request.
+    _ASK_CUE = re.compile(
+        r"(?:wanted to (?:clarify|ask|know)|my question|really asking|actually)"
+        r"(?:\s+is)?\s*[,:.]?\s*",
+        re.I)
+
+    @classmethod
+    def _retrieval_key(cls, query: str) -> str:
+        """The part of `query` retrieval should actually match on."""
+        q = (query or "").strip()
+        if len(q) < 200:
+            return q
+        m = list(cls._ASK_CUE.finditer(q))
+        if m:                                   # explicit "what I really meant is ..."
+            tail = q[m[-1].end():].strip()
+            if len(tail) > 15:
+                return tail
+        # otherwise the LAST question plus whatever follows it (answer options)
+        parts = [i for i, ch in enumerate(q) if ch == "?"]
+        if len(parts) >= 2:
+            start = q.rfind("?", 0, parts[-1]) + 1
+            tail = q[start:].strip()
+            if len(tail) > 15:
+                return tail
+        return q
+
     def retrieve_with_source_groups(self, query: str, k: Optional[int] = None):
         """Return (context_text, source_id_groups).
 
@@ -652,6 +683,7 @@ class SchemaMemorySystem:
         """
         self.finalize()
         k = k or self.retrieve_k
+        query = self._retrieval_key(query)
         # collect (entity, slot) pairs
         pairs = [(sch.entity, slot) for sch in self._graph.entities.values()
                  for slot in sch.slots.values()]

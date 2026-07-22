@@ -257,3 +257,19 @@ def test_l2_splits_the_batch_when_extraction_yield_collapses():
     # it must have retried on progressively smaller batches, not accepted 1-of-8
     assert max(chat.sizes) == 8 and min(chat.sizes) <= 2, chat.sizes
     assert len(sm._graph.entities) >= 4, list(sm._graph.entities)
+
+
+def test_retrieval_keys_on_the_real_question_not_the_filler():
+    """MemBench-noisy buries the request under chatter that contains DECOY
+    questions. Keying on the whole string lets the filler drive ranking."""
+    noisy = ("but then again, I remembered I need to finish that book. Did you see the "
+             "weather forecast? I could swear I saw a post about a new place to explore. "
+             "What was that restaurant we talked about last week?Oh, what I truly wanted "
+             "to clarify is,What position does someone who has rock climbing as a hobby "
+             "hold? A. Sales Associate B. Outdoor Guide C. Gym Instructor")
+    key = SchemaMemorySystem._retrieval_key(noisy)
+    assert key.startswith("What position does someone"), key
+    assert "weather forecast" not in key and "restaurant" not in key
+    # short plain questions are untouched
+    assert SchemaMemorySystem._retrieval_key("Which sport is goaltender associated with?") \
+        == "Which sport is goaltender associated with?"
