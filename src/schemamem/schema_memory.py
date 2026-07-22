@@ -363,9 +363,12 @@ class SchemaMemorySystem:
         hint = f"PARTICIPANTS (use these exact names as subjects): {known}\n" if known else ""
         facts, seen = [], set()
 
-        def run_pass(sys_prompt, mt, segment):
+        def call_pass(spec):
+            sys_prompt, mt, segment = spec
             u = f"{hint}RAW DIALOGUE (one episode):\n{segment}\n\nJSON:"
-            parsed = _extract_json(self._chat(sys_prompt, u, max_tokens=mt), key="facts")
+            return _extract_json(self._chat(sys_prompt, u, max_tokens=mt), key="facts")
+
+        def collect(parsed):
             for f in parsed.get("facts", []):
                 ftext = (f.get("text") or "").strip()
                 if not ftext:
@@ -386,10 +389,22 @@ class SchemaMemorySystem:
         #       detail; shortening the context each pass sees restores recall. Recall of
         #       a durable value is monotone under the union of windows (a value seen in
         #       ANY window is kept), and dedup keeps the fact set clean.
-        run_pass(CLEAN_SYS, 1200, text)
+        # The passes are independent, so they go out CONCURRENTLY and are collected
+        # in a FIXED order — results stay deterministic (dedup is order-sensitive)
+        # while latency drops to the slowest single call instead of their sum. This
+        # is the dominant cost of ingestion: MemBench rebuilds memory once per
+        # trajectory, so serial passes put the full benchmark out of reach.
+        specs = [(CLEAN_SYS, 1200, text)]
         for seg in self._l1_windows(text):
             for _ in range(self.l1_quant_samples):
-                run_pass(QUANT_SYS, 500, seg)
+                specs.append((QUANT_SYS, 500, seg))
+        if len(specs) == 1:
+            collect(call_pass(specs[0]))
+        else:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=min(8, len(specs))) as ex:
+                for parsed in list(ex.map(call_pass, specs)):
+                    collect(parsed)
         return facts
 
     def _l1_windows(self, text: str) -> list:
