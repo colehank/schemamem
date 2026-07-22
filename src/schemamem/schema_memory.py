@@ -301,8 +301,13 @@ class SchemaMemorySystem:
         """Normalize an entity name: a bare person/thing, never a compound
         'Entity.slot' string (a failure mode when schema-state is fed back)."""
         e = (raw or "user").strip()
-        if "." in e:                       # 'Caroline.adoption_goal' -> 'Caroline'
-            e = e.split(".", 1)[0].strip()
+        # 'Caroline.adoption_goal' -> 'Caroline', but a dot is also part of many real
+        # names ("L. Ron Hubbard", "Apple Inc.", "Martin Luther King Jr."). Only split
+        # when it looks like the entity.slot compound this guards against: no space
+        # around the dot and a slot-shaped suffix (lowercase word / snake_case).
+        m = re.match(r"^([^.\s][^.]*?)\.([a-z][a-z0-9_]*)$", e)
+        if m:
+            e = m.group(1).strip()
         if known:                          # snap to a known speaker if one matches
             for k in known:
                 if k.lower() == e.lower():
@@ -422,7 +427,14 @@ class SchemaMemorySystem:
                 self._ingest_facts(facts[i:i + self._l2_batch], episode_id, t, known)
             return
         state_json = json.dumps(self._schema_state(), ensure_ascii=False)
-        facts_block = "\n".join(f"- [{f['subject']}] {f['text']}" for f in facts)
+        # A fact with no subject is one L1 passed through verbatim (a declarative
+        # list item). Do NOT invent one: the bracket tells L2 to use that exact
+        # entity, and an empty subject normalises to "user", which would attribute
+        # every world fact to the speaker. Leave it unprefixed so L2 reads the
+        # subject off the sentence, per the narrative-input rule.
+        facts_block = "\n".join(
+            (f"- [{f['subject']}] {f['text']}" if f.get("subject") else f"- {f['text']}")
+            for f in facts)
         hint = f"KNOWN ENTITIES (reuse these exact names): {known}\n" if known else ""
         user = (f"{hint}CURRENT SCHEMA (nested entity -> slot -> belief + open candidate keys):\n"
                 f"{state_json}\n\nFACTS (each prefixed with its subject entity in brackets — use "

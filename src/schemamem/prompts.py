@@ -114,6 +114,12 @@ A schema has SLOTS (attributes of an entity, e.g. diet, location, job). Each slo
 belief value. Your job: from a NEW message, extract assertions and judge each against the schema.
 
 CRITICAL RULES:
+- COVERAGE FIRST. When the FACTS block is a list of independent declarative statements (one entity
+  and one attribute each, as in "3. QuickTime was developed by Apple Inc."), emit EXACTLY ONE
+  assertion PER LISTED FACT, in order, dropping none and merging none. These are not conversational
+  chatter to be summarised — each line is already a separate assertion about a separate entity, and
+  a line you skip becomes an entity the system can never answer about. Do not stop early; if the
+  list has N items your output has N assertions.
 - One assertion = one entity's one slot taking one value. Extract assertions for ANY entity/slot the
   message speaks to, INCLUDING slots not yet in the schema (mint a new stable snake_case slot name).
 - "entity" MUST be a bare name of a person or thing (e.g. "Caroline", "user"). NEVER write a compound

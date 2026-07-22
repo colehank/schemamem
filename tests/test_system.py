@@ -180,3 +180,15 @@ def test_declarative_fact_list_bypasses_the_lossy_l1_rewrite():
     # a dialogue with an incidental bullet is NOT a fact list
     dialogue = "user: hi there\nassistant: sure\n- one aside\nuser: ok thanks\nassistant: bye"
     assert SchemaMemorySystem._as_fact_list(dialogue) is None
+
+
+def test_entity_names_keep_their_dots():
+    """The entity.slot guard must not amputate real names. "L. Ron Hubbard" was
+    being stored as "L", so every fact about him landed on one junk entity."""
+    ce = SchemaMemorySystem._clean_entity
+    assert ce("L. Ron Hubbard") == "L. Ron Hubbard"
+    assert ce("Apple Inc.") == "Apple Inc."
+    assert ce("Martin Luther King Jr.") == "Martin Luther King Jr."
+    # the compound it actually guards against still splits
+    assert ce("Caroline.adoption_goal") == "Caroline"
+    assert ce("Hines Ward.position") == "Hines Ward"
