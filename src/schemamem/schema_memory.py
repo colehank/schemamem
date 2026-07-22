@@ -654,12 +654,21 @@ class SchemaMemorySystem:
         # the goaltender plays, it returned ten other sport slots and never the
         # goaltender's, because they are all "about sport". Resolve the mention
         # first, rank second; this is what having an entity index is for.
-        ql = f" {(query or '').lower()} "
+        # Match on TOKENS, not on the whole string: the extracted name and the
+        # question rarely agree character-for-character ("The 2004 NBA Draft" vs
+        # "2004 NBA Draft", "Apple Inc." vs "Apple Inc"). Requiring every
+        # significant token of the entity to appear keeps that precise — a
+        # two-token name must have both tokens present — while surviving
+        # articles, punctuation and suffixes.
+        _STOP = {"the", "a", "an", "of", "in", "at", "on", "for", "and", "is", "was"}
+        q_tokens = set(re.findall(r"[a-z0-9]+", (query or "").lower()))
+
         def _mentioned(entity: str) -> bool:
-            e = (entity or "").strip().lower()
-            if len(e) < 3:
+            toks = [t for t in re.findall(r"[a-z0-9]+", (entity or "").lower())
+                    if t not in _STOP]
+            if not toks or sum(len(t) for t in toks) < 3:
                 return False
-            return f" {e} " in ql or f" {e}'" in ql or f" {e}," in ql or f" {e}?" in ql
+            return all(t in q_tokens for t in toks)
 
         ranked = pairs
         try:
