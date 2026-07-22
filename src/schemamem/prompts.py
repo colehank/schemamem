@@ -45,10 +45,14 @@ RULES:
   (b) CONTRIBUTING new content the user did not supply — a recommendation, a name, a title, a
       quotation, a place, a figure, an instruction ("I'd suggest Roscioli, a deli near the Vatican",
       "Use a Pilsner or Lager", "That would be the GR-90 trail"). Here the PAYLOAD IS THE ANSWER and
-      must survive verbatim. Emit a fact that STATES THE CONTENT, subject = the assistant (or the
-      entity the content is about). NEVER collapse such a turn into a statement about what the user
-      wants or is interested in: "assistant recommended Roscioli, a deli near the Vatican" is
-      correct; "user is looking for advice on delis" DESTROYS the answer and is wrong.
+      must survive verbatim. Emit a fact that STATES THE CONTENT.
+      SUBJECT IS THE TOPIC THE CONTENT IS ABOUT — never "assistant", never the user. The topic is
+      the thing being discussed: the dish, the park, the book, the place. "The GR-90 trail was
+      recommended for the Natural Park of Moncayo" has SUBJECT "Natural Park of Moncayo"; "A Pilsner
+      or Lager was recommended for Seco de Cordero" has SUBJECT "Seco de Cordero". Filing these
+      under "assistant" would pile every recommendation onto one entity that no later question ever
+      names, making them unretrievable. NEVER collapse such a turn into a statement about what the
+      user wants or is interested in: "user is looking for advice on delis" DESTROYS the answer.
   Either way, do not skip a turn just because the assistant spoke it.
 - Third parties count. If the user mentions someone else ("my friend Rachel just moved to the
   suburbs"), emit a fact whose SUBJECT is that third party (Rachel), not the user.
