@@ -166,3 +166,17 @@ def test_named_entity_outranks_topically_similar_slots():
         "Which sport is goaltender associated with?", k=1)
     assert "goaltender" in ctx, ctx
     assert "pesapallo" in ctx, ctx
+
+
+def test_declarative_fact_list_bypasses_the_lossy_l1_rewrite():
+    """A numbered fact list is ALREADY what L1 is supposed to produce, so running
+    an LLM over it can only drop items. FactConsolidation puts ~277 facts in one
+    chunk, far past a capped completion, which lost most of every chunk."""
+    listed = "\n".join(f"{i}. Entity{i} was born in City{i}." for i in range(40))
+    assert SchemaMemorySystem._as_fact_list(listed) is not None
+    got = SchemaMemorySystem._as_fact_list(listed)
+    assert len(got) == 40, len(got)
+    assert got[7] == "Entity7 was born in City7."
+    # a dialogue with an incidental bullet is NOT a fact list
+    dialogue = "user: hi there\nassistant: sure\n- one aside\nuser: ok thanks\nassistant: bye"
+    assert SchemaMemorySystem._as_fact_list(dialogue) is None

@@ -18,6 +18,7 @@ flat-retrieval fallback on entities that have no schema yet (the design's
 from __future__ import annotations
 
 import json
+import re
 from typing import Optional
 
 try:                                    # package-relative when vendored
@@ -84,6 +85,9 @@ class SchemaMemorySystem:
         # Characters of raw episode text appended after the schema gist at query
         # time. 0 disables the verbatim layer (schema-only, the previous behaviour).
         verbatim_budget: int = 24000,
+        # facts per L2 completion; one assertion costs ~40 output tokens and the
+        # reply is capped, so a larger batch silently truncates the tail.
+        l2_batch: int = 25,
         embedding_provider: Optional[str] = None,
         embedding_api_key: Optional[str] = None,
         embedding_api_base: Optional[str] = None,
@@ -121,6 +125,7 @@ class SchemaMemorySystem:
         self._emb_cache: dict = {}
         self._embed_batch = int(embed_batch)
         self.verbatim_budget = int(verbatim_budget)
+        self._l2_batch = max(1, int(l2_batch))
         self.state_path = state_path
 
         # LLM client (OpenAI-compatible). Injected in tests; otherwise built from
@@ -305,9 +310,34 @@ class SchemaMemorySystem:
         return e or "user"
 
     # ---- L1: raw episode -> self-contained, subject-bound facts ------------
+    # A chunk that is already a list of self-contained declarative facts (numbered,
+    # bulleted, or one-per-line) needs no L1 rewrite: L1's job is to PRODUCE such
+    # facts, so running an LLM over them can only lose some. On FactConsolidation a
+    # 4096-token chunk holds ~277 numbered facts, far past what a single capped
+    # completion can re-emit, so the rewrite silently dropped most of every chunk.
+    _LIST_ITEM = re.compile(r"^\s*(?:\d+[.)]|[-*•])\s+(.+?)\s*$")
+
+    @classmethod
+    def _as_fact_list(cls, text: str) -> Optional[list]:
+        """Return the list items if `text` is predominantly a declarative list,
+        else None. Conservative: needs several items and near-total coverage, so
+        a dialogue that happens to contain a bulleted aside is not misread."""
+        lines = [ln for ln in (text or "").split("\n") if ln.strip()]
+        if len(lines) < 5:
+            return None
+        items = [m.group(1) for m in (cls._LIST_ITEM.match(ln) for ln in lines) if m]
+        if len(items) < 5 or len(items) < 0.8 * len(lines):
+            return None
+        return [i for i in items if len(i) > 3]
+
     def _clean_to_facts(self, text: str, known: list) -> list:
         """L1 stage: rewrite a raw dialogue chunk into subject-bound self-contained
         facts. Returns [{"subject": <entity>, "text": <fact>}, ...]."""
+        listed = self._as_fact_list(text)
+        if listed is not None:
+            # already self-contained facts — pass through verbatim, lossless.
+            return [{"subject": "", "text": s} for s in listed]
+
         hint = f"PARTICIPANTS (use these exact names as subjects): {known}\n" if known else ""
         facts, seen = [], set()
 
@@ -381,6 +411,15 @@ class SchemaMemorySystem:
         current schema for slot/candidate reuse and mutates it), so this runs
         sequentially even when L1 is parallelized."""
         if not facts:
+            return
+        # One assertion costs ~40 output tokens, so a single capped completion can
+        # only carry ~25 of them. A dense chunk (a FactConsolidation page holds
+        # ~277 facts) silently lost everything past the cap. Split into batches
+        # small enough that the reply fits, and ingest them in order so the
+        # cross-episode vote and the schema state stay correct.
+        if len(facts) > self._l2_batch:
+            for i in range(0, len(facts), self._l2_batch):
+                self._ingest_facts(facts[i:i + self._l2_batch], episode_id, t, known)
             return
         state_json = json.dumps(self._schema_state(), ensure_ascii=False)
         facts_block = "\n".join(f"- [{f['subject']}] {f['text']}" for f in facts)
