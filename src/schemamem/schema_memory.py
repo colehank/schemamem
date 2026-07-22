@@ -88,6 +88,15 @@ class SchemaMemorySystem:
         # facts per L2 completion; one assertion costs ~40 output tokens and the
         # reply is capped, so a larger batch silently truncates the tail.
         l2_batch: int = 25,
+        # Characters an EPISODE must reach before extraction runs; 0 (default) keeps
+        # one add_chunk = one episode. Raise it when the caller's granularity is finer
+        # than an episode: MemBench sends 171 conversational TURNS totalling 6.3k
+        # tokens, so per-turn extraction is both wasteful — a full L1+L2 pass on ~170
+        # characters — and semantically wrong, since k>=2 counts DISTINCT episodes and
+        # two adjacent turns of one conversation are not independent evidence.
+        # Whether a call is an episode is the CALLER's granularity, so it is a config
+        # decision rather than something to infer.
+        min_episode_chars: int = 0,
         embedding_provider: Optional[str] = None,
         embedding_api_key: Optional[str] = None,
         embedding_api_base: Optional[str] = None,
@@ -126,6 +135,9 @@ class SchemaMemorySystem:
         self._embed_batch = int(embed_batch)
         self.verbatim_budget = int(verbatim_budget)
         self._l2_batch = max(1, int(l2_batch))
+        self.min_episode_chars = int(min_episode_chars)
+        self._pending: list = []          # buffered (text, timestamp) awaiting an episode
+        self._pending_speakers = None
         self.state_path = state_path
 
         # LLM client (OpenAI-compatible). Injected in tests; otherwise built from
@@ -541,11 +553,25 @@ class SchemaMemorySystem:
                   speakers: Optional[list] = None) -> None:
         """Ingest one context chunk as ONE episode: L1 clean -> L2 extract -> L3.
         For many chunks, prefer add_chunks() which parallelizes the L1 stage."""
+        self._pending.append((text or "", timestamp))
+        self._pending_speakers = speakers or getattr(self, "_pending_speakers", None)
+        if sum(len(x) for x, _ in self._pending) >= self.min_episode_chars:
+            self._flush_pending()
+
+    def _flush_pending(self) -> None:
+        """Turn everything buffered so far into ONE episode and ingest it."""
+        if not self._pending:
+            return
+        buffered, self._pending = self._pending, []
+        text = "\n".join(x for x, _ in buffered if x)
+        timestamp = next((ts for _, ts in buffered if ts), None)
+        if not text.strip():
+            return
         self._episode_counter += 1
         episode_id = f"ep{self._episode_counter}"
         t = timestamp or episode_id
         self._episodes[episode_id] = (t, text)
-        known = speakers or list(self._graph.entities.keys())
+        known = self._pending_speakers or list(self._graph.entities.keys())
         facts = self._clean_to_facts(text, known)
         self._ingest_facts(facts, episode_id, t, known)
 
@@ -591,6 +617,7 @@ class SchemaMemorySystem:
 
     def finalize(self):
         """Flush stalled candidates to protected exceptions (stream-end sweep)."""
+        self._flush_pending()          # a partial episode still counts
         return self._graph.finalize()
 
     def dump_memory(self, traj_id: Optional[str] = None) -> dict:

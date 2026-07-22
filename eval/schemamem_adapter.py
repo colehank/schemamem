@@ -69,6 +69,9 @@ class SchemaMemAdapter:
         # characters of raw episode text appended after the schema gist;
         # 0 = schema-only context (pre-dual-store behaviour)
         verbatim_budget: int = 24000,
+        # 0 = one add_chunk is one episode. Raise when the harness feeds a
+        # granularity finer than an episode (MemBench sends one TURN per call).
+        min_episode_chars: int = 0,
         **extra_kwargs,
     ) -> None:
         self.model = model
@@ -84,6 +87,7 @@ class SchemaMemAdapter:
         self.l1_window_chars = int(l1_window_chars)
         self.l1_quant_samples = int(l1_quant_samples)
         self.verbatim_budget = int(verbatim_budget)
+        self.min_episode_chars = int(min_episode_chars)
 
         # LLM client for answering (OpenAI-compatible: points at local vLLM 9908).
         self._client = OpenAI(api_key=api_key or "EMPTY", base_url=api_base)
@@ -103,6 +107,7 @@ class SchemaMemAdapter:
                 l1_window_chars=self.l1_window_chars,
                 l1_quant_samples=self.l1_quant_samples,
                 verbatim_budget=self.verbatim_budget,
+                min_episode_chars=self.min_episode_chars,
                 state_path=state_path,
             )
         else:

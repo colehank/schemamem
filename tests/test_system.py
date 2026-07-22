@@ -292,3 +292,29 @@ def test_permanent_gateway_rejection_skips_the_chunk_instead_of_killing_the_run(
     assert sm._chat("sys", "user") == ""       # degrades, does not raise
     assert _Filtered.calls == 1                # and does not burn retries on it
     sm.add_chunk("some text that gets filtered")   # whole pipeline survives
+
+
+def test_turn_level_input_can_be_buffered_into_one_episode():
+    """When the caller's granularity is finer than an episode — MemBench sends 171
+    turns totalling 6.3k tokens — per-turn extraction is wasteful AND breaks k>=2,
+    since adjacent turns of one conversation are not independent evidence."""
+    calls = {"n": 0}
+
+    class _Count:
+        def create(self, **kw):
+            calls["n"] += 1
+            return _Resp('{"facts": []}')
+
+    client = type("C", (), {"chat": type("X", (), {"completions": _Count()})()})()
+    sm = SchemaMemorySystem(model="mock", client=client, min_evidence_count=2,
+                            min_episode_chars=2000)
+    for i in range(40):
+        sm.add_chunk(f"user: turn number {i} about Amelia and her birthday plans.")
+    sm.finalize()
+    assert sm._episode_counter <= 2, sm._episode_counter     # not 40 episodes
+    assert calls["n"] <= 6, calls["n"]                       # not 40 L1 passes
+    # default is unbuffered: one call, one episode
+    sm2 = SchemaMemorySystem(model="mock", client=_Client([]), min_evidence_count=2)
+    for i in range(3):
+        sm2.add_chunk(f"user: turn {i}")
+    assert sm2._episode_counter == 3, sm2._episode_counter
