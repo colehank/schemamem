@@ -5,13 +5,26 @@ live, how we work, and — importantly — **which things are stable and which a
 
 ## What this is
 
-SchemaMem is a long-term memory system for LLM agents, and the subject of an in-progress AAAI paper.
-Its one idea: a per-entity **schema** (named slots + a time-ordered evidence ledger) that
-distinguishes a **genuine change** to a belief from an **isolated exception** to it, using a single
-criterion — the **prediction residual** of a new observation against the current belief — read
-along two axes (magnitude × cross-episode recurrence). That criterion routes each observation to
-one of a small set of actions (assimilate / accumulate / accommodate / protect, plus an optional
-forget). The capability nobody else has is the third outcome: *protect as exception*.
+**The north star: SOTA memory evolution for long-running LLM agents, inspired by the schema.**
+Not a particular data structure, not a particular set of actions — those are means. The end is a
+memory that evolves *soundly* as evidence arrives: it strengthens what recurs, revises what
+genuinely changed, dismisses noise, and drops what it can reconstruct. The schema — an internal
+model of an entity that issues graded expectations about the next observation — is the *inspiration*
+for how to do that, and the **prediction residual** (how far an observation departs from what the
+schema expects) is the single signal the whole thing turns on. Everything below is one way to
+realise that goal, and is **explicitly not the goal itself**. Do not die-hard on any current
+version; if a better structure serves SOTA memory evolution, take it.
+
+**Two realizations exist in this repo, on purpose:**
+
+- **The slot model (`src/schemamem/core.py`) — the current *baseline*, with real numbers.** A
+  per-entity schema of named single-valued slots; the residual routes each observation among
+  assimilate / accumulate / accommodate / (protect) / forget. This is what every eval number so far
+  was produced with, and it is the **fallback** — it stays runnable and correct.
+- **The evolving graph (`src/schemamem/graph_core.py`) — the *frontier*.** A knowledge graph whose
+  edges carry evolving belief. It generalises the slot model and fixes two things the slot model got
+  wrong (see the Direction section). It is the direction of travel, being built up beside the
+  baseline so neither blocks the other.
 
 ## ⚠️ What is STABLE vs what is MOVING
 
@@ -42,6 +55,42 @@ When the science and this file disagree, **the design docs win** — and when yo
 decision with the user, update the relevant `docs/design/*.md`, not this file. Keep CLAUDE.md about
 structure and process.
 
+- `docs/design/evolving_graph.md` — **the current frontier model**: the evolving knowledge graph,
+  the two evolution dynamics (replacement vs accumulation), exception-as-incubation, the KG-with-
+  evolution position, and the MDL lens that unifies them. Read this to understand where the method
+  is going; `core_model.md` / `full_paper_zh.md` still describe the slot-model paper as submitted.
+
+## Direction: don't die-hard the slot model (read before proposing "the fix")
+
+The slot model reached second place across three evolution axes at a sixth of the context — good,
+but a memory dump on real data exposed a structural limit, and chasing it inside the slot model is
+the wrong instinct. Two things the slot model gets wrong, and how the frontier answers them (full
+reasoning in `docs/design/evolving_graph.md`):
+
+1. **Memory evolution has two dynamics, and the slot model only had one.** Some attributes
+   **replace** (a person lives in one place at a time — a new value supersedes the old). Others
+   **accumulate** (a company develops many products — a new value coexists). The single-valued slot
+   forced accumulation through the replacement path, so a real value ("Apple developed iPod") got
+   thrown to the exception store because the slot was already taken. The residual alone cannot tell
+   these apart — both are high-residual. The **relation's cardinality** (functional vs plural) is
+   the second axis that does. In the graph, plural relations grow natively.
+2. **An isolated conflict is not a dead exception — it is an incubating belief.** The slot model's
+   `finalize()` swept unpromoted candidates into a terminal `exceptions` store where they died. But
+   an isolated conflict that *recurs* was a real change we were slow to accept, and one that
+   *accumulates without matching any existing belief* is a new belief forming. Exceptions should
+   stay **alive and promotable** — which is exactly the hippocampal→neocortical consolidation the
+   CLS grounding already describes. In the graph, a conflict INCUBATES as a pending edge and is
+   promoted (to UPDATE, or to a new belief) when evidence accrues.
+
+**The frontier keeps the paper's spine and extends it.** One residual signal still drives
+everything; graded expectation still applies where it is valid (functional relations); and the
+five destinations — CONSOLIDATE / GROW / UPDATE / INCUBATE / DISSOLVE — are the residual routed by
+cardinality. Objects becoming first-class nodes also buys **multi-hop** (an answer reachable by
+chaining relations, stored nowhere directly), which the slot model structurally could not do. KG is
+not the enemy of evolution — *static* triple KG is; a **belief-carrying** graph is not, and that is
+what we build. Leave the possibility space open: the goal is SOTA memory evolution, and the
+structure serves it, never the reverse.
+
 For the empirical side (benchmarks, comparisons, and the current experiment plan) look at
 `docs/eval/`:
 
@@ -58,12 +107,15 @@ For the empirical side (benchmarks, comparisons, and the current experiment plan
 
 ```
 src/schemamem/
-  core.py           # L3: entity graph + per-slot changepoint arbitration. Pure, deterministic, no LLM.
+  core.py           # BASELINE L3: per-slot changepoint arbitration. Pure, deterministic, no LLM.
+  graph_core.py     # FRONTIER L3: evolving knowledge graph — five dynamics on one residual signal,
+                    #   routed by relation cardinality; plus multi-hop. Pure, deterministic, no LLM.
   prompts.py        # validated L1/L2 extraction + rewrite + answer prompts (see "prompt invariants" below)
   schema_memory.py  # SchemaMemorySystem — LLM ingestion + query rendering; the public API + eval contract
   __init__.py       # public exports
-tests/              # test_core.py (routing, no LLM) + test_system.py (adapter contract, mock LLM)
-                    # + test_bench_adapters.py (FC subject parser, pure-Python)
+tests/              # test_core.py (slot routing) + test_graph_core.py (graph dynamics + hops),
+                    #   both no-LLM; test_system.py (adapter contract, mock LLM);
+                    #   test_bench_adapters.py (FC subject parser, pure-Python)
 examples/           # diet_dialogue.py — offline end-to-end demo, no API key
 eval/               # MemoryData benchmark adapter + config + integration guide (see eval/README.md)
 docs/CONFIGURATION.md   # LLM / embedding endpoint setup
@@ -84,13 +136,19 @@ docs/               # method_architecture.png
   EVIDENCE edges), NOT a triple KG. Each Slot holds belief / superseded / exceptions / ledger and
   runs the per-slot changepoint arbitration.
 
-## Locked design invariants (do NOT silently change)
+## Design invariants of the SLOT BASELINE (do NOT silently change *in `core.py`*)
 
-These are structural decisions made deliberately with the user. Changing one is a real decision —
-raise it, don't drift into it.
+These are deliberate decisions for the **slot baseline** (`core.py` + `schema_memory.py`). Changing
+one *there* is a real decision — raise it, don't drift into it. The **frontier graph deliberately
+revisits three of them** (marked ⟳), because the dump exposed them as slot-model artifacts, not
+principles — see the Direction section. The distinction: invariants without ⟳ are principles that
+carry to the graph too; invariants with ⟳ were structural choices the graph supersedes on purpose.
 
-1. **Change-vs-exception is the point.** The system's reason to exist is producing the *protected
-   exception* — the third outcome overwrite/merge systems structurally cannot. Never "simplify" it away.
+1. ⟳ **Change-vs-exception is the point** *(slot framing; the graph reframes)*. In the slot model the
+   distinctive outcome was the *protected exception*. The frontier keeps the underlying capability
+   but reframes it: an isolated conflict is not a terminal protected exception, it **incubates** and
+   can be promoted (INCUBATE → UPDATE / new belief). Do not "simplify" the isolated-conflict handling
+   away in either model — but do not treat "protect as a dead outcome" as the goal; incubation is.
 2. **k ≥ 2 is a hard floor, not a tunable down to 1.** One observation cannot distinguish a
    permanent change from a one-off (identical likelihoods). Accommodation requires ≥ 2 *distinct
    independent episodes*. Episode-dedup (counting distinct `episode_id`, not raw hits) is load-bearing.
@@ -105,9 +163,12 @@ raise it, don't drift into it.
    never counted toward accommodation (`candidate_id` MUST be null for 0.0 and 0.5, per prompts.py).
    The vote itself has been kept binary since the last revert — do not let 0.5 leak into candidate
    creation or counting.
-6. **The graph is a flat attributed graph, not an abstraction pyramid.** We deliberately avoid
-   MemTree/reflection-style bottom-raw→top-summary hierarchies, because abstraction is exactly what
-   smooths exceptions away.
+6. ⟳ **No abstraction pyramid — but a belief-carrying graph is fine.** We still avoid
+   MemTree/reflection-style bottom-raw→top-summary hierarchies (abstraction smooths exceptions away).
+   The slot model expressed this as "flat attributed graph, not a triple KG". The frontier revisits
+   the *not-a-KG* half: it IS a knowledge graph, but a **belief-carrying** one (edges hold evolving
+   belief + timeline), which is not the static triple KG the invariant warned against and does not
+   flatten evolution. What stays banned is the summary pyramid, not entity-to-entity edges.
 7. **`retrieve_with_source_groups` degrades to empty context for an unseen entity** → the agent
    falls back to plain retrieval. This is the *built-in falsification test*: gains must concentrate
    on knowledge-update and exception questions, and single-hop must match a retrieval baseline. Do
