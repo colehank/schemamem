@@ -38,7 +38,10 @@ though **both are true**. The missing second axis is the **relation's cardinalit
 plural). Graded expectation ("the next observation should match the current value") is only
 meaningful for functional relations; a plural relation has no single expected next value, so
 prediction error there routes *consolidate-vs-grow*, not *consolidate-vs-update*. The signal stays
-one signal; cardinality decides where it points.
+one signal; cardinality decides where it points. (Plural members are not permanent, either — one can
+be **retracted** by explicit negative evidence, "I stopped climbing"; this needs a second axis,
+observation **polarity**, added in the frontier model below. Cardinality only governs whether a
+positive rival *implies* the old value's negation — functional yes, plural no.)
 
 ### Fault 2 — an isolated conflict is not a dead exception; it is an incubating belief
 
@@ -57,31 +60,54 @@ this: a conflict **INCUBATES** as a pending edge and is promoted when evidence a
 
 ## The frontier: an evolving knowledge graph
 
-Memory is a graph whose **edges carry evolving belief**.
+Memory is a graph whose **edges carry evolving belief**. An edge is fully described by
+*value + evidence + validity intervals + context*; the discrete "status" is a **reading** of these,
+not a stored field.
 
 ```
-nodes  = entities (Apple, iPod, Caroline, Shanghai) + literals (150cm, Dec 11)
-edges  = subject --relation--> object, each carrying:
-           cardinality : FUNCTIONAL (one object at a time) | PLURAL (many coexist)
-           support     : the distinct episodes backing it (consolidation strength)
-           status      : BELIEF | SUPERSEDED | PENDING(incubating)
-           t, residual, source_facts
+nodes  = entities (Apple, iPod, Caroline, Shanghai) + literals (150cm, Dec 11) — shared, first-class
+edges  = subject --relation--> object (a belief), fully described by:
+           value      : (subject, relation, object)
+           cardinality: FUNCTIONAL (one at a time) | PLURAL (many coexist) — a property of the relation
+           evidence   : the distinct episodes backing it; each carries a timestamp and a
+                        polarity (+ present / − absent)
+           intervals  : the validity periods [from, to) it held; open = current, multiple = revived
+           context    : the tag(s) under which it holds (weekday, at-work, ...)
+STATUS IS DERIVED, not stored:
+           current = has an open interval        pending = distinct-episode count < k
+           past    = all intervals closed        (superseded vs retired = is there a successor? — a query)
+strength (derived) = f(distinct episodes, recency, consistency) — sharpens the expectation and
+                     raises the evidence needed to overturn it
 ```
 
-One residual signal, routed by cardinality, yields **five destinations**:
+One residual signal, routed by the relation's **cardinality** and the observation's **polarity**,
+gated by the **k≥2** floor, drives every edge through one lifecycle. The named actions are that
+lifecycle's projections (grouped by the three schema-evolution tiers below):
 
-| residual | cardinality / support | action | branch |
-|---|---|---|---|
-| ≈ 0 | — | **CONSOLIDATE** — add episode support; belief firms | consolidation |
-| high | PLURAL | **GROW** — new coexisting object; nothing superseded | (accumulation) |
-| high | FUNCTIONAL, ≥ k episodes | **UPDATE** — supersede belief, promote rival | updating |
-| high | FUNCTIONAL, < k episodes | **INCUBATE** — held PENDING, alive, still accruing | (incubation) |
-| reconstructable | — | **DISSOLVE** — release the raw form | forgetting |
+| observation | residual | condition | action | tier |
+|---|---|---|---|---|
+| ＋ present | ≈ 0 | restates the belief | **ASSIMILATE** — evidence++, belief firms | tuning |
+| ＋ present | high | PLURAL, new object | **ACCRETE** — new coexisting belief | accretion |
+| ＋ present | high | FUNCTIONAL, rival ≥ k | **REVISE** — close the old interval, open the new | accommodation |
+| ＋ present | high | conflict < k | **INCUBATE** — held pending, alive, still accruing | pre-restructuring |
+| − absent | high | this edge, ≥ k | **RETRACT** — close the interval, no successor | accommodation |
+| new context | — | the conflict is context-bound | **RESTRUCTURE** — split into context-tagged beliefs | restructuring |
+| ＋ present | — | matches a retired belief's context | **REVIVE** — reopen a closed interval (cheap; savings) | (revival) |
+| reconstructable | — | belief regenerates the raw form | **FORGET** — drop the verbatim, keep the gist | (orthogonal) |
 
-This is implemented and unit-tested in `src/schemamem/graph_core.py` (deterministic, no LLM;
-`tests/test_graph_core.py` proves all five dynamics plus multi-hop). It **generalises** `core.py`:
-the residual, the k≥2 floor, episode-dedup, and accommodate-as-supersede all carry over onto edges;
-what is added is the cardinality axis (GROW) and the incubation lifecycle (no dead exceptions).
+Note **REVISE = RETRACT(old) ⊕ ACCRETE(new)**, fused by functional exclusivity: on a functional
+relation a positive rival *implies* the old value's negation, so eviction + install happen in one
+step; on a plural relation there is no such implication, so a member only leaves via its own explicit
+RETRACT. This is why **plural relations evolve too** — the slot model, lacking polarity, could only
+ever grow them.
+
+**Implemented today** in `src/schemamem/graph_core.py` (deterministic, no LLM;
+`tests/test_graph_core.py`): ASSIMILATE / ACCRETE / REVISE / INCUBATE (under the older names
+CONSOLIDATE / GROW / UPDATE / INCUBATE) plus multi-hop. It generalises `core.py`: the residual, the
+k≥2 floor, and episode-dedup all carry onto edges. **Not yet implemented — the frontier's next
+step:** polarity (RETRACT), the context tag (RESTRUCTURE + conditional beliefs), REVIVE, and
+validity intervals replacing the status enum. The representation move is
+*(cardinality, support, status)* → *(value, evidence±, intervals, context)*.
 
 ### What objects-as-nodes buys: multi-hop
 
@@ -109,16 +135,80 @@ So "replace vs accumulate" is an MDL outcome, not a switch we flip. Honest cavea
 we do not compute description length; we approximate the residual with an LLM surprise score and
 cardinality with an LLM judgment. MDL is the lens and the justification, not a claim of exact coding.
 
+## The cognitive spine: schema evolution in three tiers (+ context)
+
+The method's cognitive grounding is **schema evolution**, and it runs at two levels at once:
+
+- each **edge** behaves like a memory **trace** — it strengthens, is updated, extinguishes, revives;
+- the **graph** of edges **is the schema** — and schema evolution is the *aggregate* of edge-level
+  dynamics.
+
+Schema evolution is not one tidy modern theory; it is a lineage we synthesize (state it as such):
+**Piaget** (assimilation / accommodation / equilibration), **Rumelhart & Norman 1978**
+("Accretion, Tuning and Restructuring: Three Modes of Learning"; originally a 1976 technical
+report), and modern schema-memory neuroscience (Tse 2007; Gilboa & Marlatte 2017; van Kesteren
+2012; Sinclair 2019/2021). The trace-level neural findings are the *implementation* of the
+schema-level modes, not a competing account.
+
+**Top cut (Piaget), by residual.** residual ≈ 0 → the observation *fits* → **assimilation**;
+residual high → the schema must change → **accommodation**. The residual is the boundary
+(Ortiz-Tudela et al. 2024, *Phil Trans R Soc B*; predictive processing).
+
+**Three tiers of change (Rumelhart & Norman), by what the residual implies:**
+
+| tier | R&N definition | our mechanism | trace-level grounding |
+|---|---|---|---|
+| **Accretion** | add new knowledge (most common) | ACCRETE (new coexisting belief); seeding | new trace; congruent fast integration (Tse 2007) |
+| **Tuning** | slow refinement through practice; expertise | ASSIMILATE (accumulate support, sharpen expectation); minor REVISE | consolidation strengthening; precision-weighting |
+| **Restructuring** | form new conceptual structures (rare, effortful) | INCUBATE → new belief; contested → differentiate; exception accumulates → new schema | differentiation of mispredicted memories (Preston 2017); pattern separation |
+
+The six actions are the residual routed into these tiers: ASSIMILATE = tuning; ACCRETE = accretion;
+REVISE / RETRACT = accommodation (minor); **INCUBATE = pre-restructuring** (holding a conflict until
+it forces reorganization); FORGET = an orthogonal gist-retention axis.
+
+**The context dimension (the three gaps the single-valued slot mishandled).** A belief carries a
+**context tag**, which closes three cases exactly as the brain does:
+
+- **revival (回潮)**: a retired belief reopens under a matching context — extinction is *not* erasure
+  but a new competing memory (Bouton 2004); reopening is cheap because storage strength persists
+  ("savings"; Bjork & Bjork).
+- **contested (拉锯)**: two recurring rivals are *differentiated* into distinct context-tagged
+  traces rather than thrashing a single value (integration-vs-differentiation, Preston 2017) — this
+  is **restructuring**.
+- **conditional (看情况)**: "weekday veg / weekend meat" is two context-instantiated beliefs,
+  disambiguated by context-gating (dentate-gyrus ensembles, 2024), not a contradiction.
+
+**Never-delete principle.** Retired and superseded beliefs are retained (closed validity intervals),
+never erased — grounded in extinction-is-not-erasure (Bouton) and persistent storage strength
+(Bjork). Revival is *reopening a closed interval*, not relearning from scratch.
+
+**What this changes for the build.** Accretion and tuning are already in `graph_core.py`
+(GROW, CONSOLIDATE). **Restructuring and the context tag are the frontier's next step** — the belief
+representation becomes *value + validity intervals + evidence + context*, and the discrete "status"
+enum dissolves into readings of these. Restructuring is the schema-level name for what INCUBATE was
+reaching toward: not just swapping a value, but reorganizing structure when conflict accumulates.
+
+**Honest notes.** Rumelhart & Norman 1978 verified (three modes as above; originally a 1976 report).
+"Schema evolution" is our synthesis of a real lineage, not a single modern theory. Trace-level
+findings (Bouton, Preston, Bjork, context-gating) are grounding by analogy, not claims of neural
+mechanism. Context and restructuring are design direction, not yet implemented in `graph_core.py`.
+Citations here (Rumelhart-Norman, Bouton, Preston, Bjork, context-gating, Tse, Sinclair,
+Ortiz-Tudela) must be re-verified in Zotero with exact venue/year before entering the paper.
+
 ## What survives from the paper, unchanged
 
 The frontier keeps the paper's spine:
 
 - **one signal** (residual) drives all evolution;
 - **graded expectation** still applies, exactly where it is valid — functional relations;
-- the **three research branches** (consolidation / updating / forgetting) still map one-to-one, and
-  are joined by the two operations the phenomenon also needs (accumulation, incubation);
-- the **cognitive grounding** (schema, prediction error, CLS/SLIMM) is now honoured *better* —
-  incubation is the CLS consolidation the slot model's dead-exception sweep contradicted.
+- the **three research branches** (consolidation / updating / forgetting) still map on, now joined by
+  the operations the phenomenon also needs — accretion, incubation, restructuring, revival — with
+  **context** as the extra dimension that makes them sound;
+- the **cognitive grounding** (schema, prediction error, CLS) is now honoured *better* — incubation is
+  the CLS consolidation the slot model's dead-exception sweep contradicted, and the three tiers
+  (accretion / tuning / restructuring) give the whole thing a named cognitive spine. SLIMM is cited as
+  a *hypothesis* only (challenged by the 2025 "slim pickings for SLIMM" replication); the grounding
+  leans on the sturdier pillars (Tse, Sinclair, Quent/Greve/Henson, Bouton).
 
 ## Staged build (protect the working baseline)
 

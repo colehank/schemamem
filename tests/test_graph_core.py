@@ -1,93 +1,137 @@
-"""Deterministic tests for the evolving knowledge graph (no LLM).
+"""Deterministic tests for the evolving belief graph (no LLM).
 
-Proves the five evolution dynamics coexist on one structure, plus multi-hop
-reachability — the model the paper's memory-evolution account requires.
+Proves the full lifecycle on one structure: seed / assimilate / incubate (k-gate) /
+revise / retract / accrete / revive, plus the soundness fixes — fresh-evidence
+counting (no stale-vote revival), context fallback + absorption, contested
+suspension, k-gated negatives — and multi-hop reachability.
 """
-from schemamem.graph_core import SchemaGraph, Action, Card, Status
+from schemamem.graph_core import EvolvingGraph, Action, Card
 
 
 def _g():
-    return SchemaGraph(k=2)
+    return EvolvingGraph(k=2, flip_max=2)
 
 
-def test_functional_relation_updates_by_replacement():
-    """diet: veg -> pescatarian. Two distinct episodes assert the new value, so
-    it supersedes; one would only incubate."""
+def test_seed_then_assimilate():
     g = _g()
-    assert g.ingest("user", "diet", "vegetarian", residual=0.0, episode_id="ep1") is Action.CONSOLIDATE
-    # one conflicting episode: incubates, belief unchanged
-    assert g.ingest("user", "diet", "pescatarian", residual=1.0, episode_id="ep2") is Action.INCUBATE
-    assert g.objects("user", "diet") == ["vegetarian"]
-    # a second distinct episode promotes it: UPDATE
-    assert g.ingest("user", "diet", "pescatarian", residual=1.0, episode_id="ep3") is Action.UPDATE
-    assert g.objects("user", "diet") == ["pescatarian"]
-    assert g.objects("user", "diet", status=Status.SUPERSEDED) == ["vegetarian"]
+    assert g.ingest("user", "diet", "vegetarian", episode_id="e1") is Action.SEED
+    assert g.ingest("user", "diet", "vegetarian", episode_id="e2") is Action.ASSIMILATE
+    assert g.believe("user", "diet") == "vegetarian"
 
 
-def test_plural_relation_grows_without_conflict():
-    """Apple developed iPod AND QuickTime. A second object is not a rival; it
-    coexists. This is the case the single-valued slot model threw to 'exception'."""
+def test_one_off_conflict_incubates_then_revises():
+    """A single conflicting episode does not change the belief (k-gate); a second does."""
     g = _g()
-    assert g.ingest("Apple", "developed", "iPod", residual=0.0,
-                    episode_id="ep1", cardinality=Card.PLURAL) is Action.GROW
-    assert g.ingest("Apple", "developed", "QuickTime", residual=1.0,
-                    episode_id="ep2", cardinality=Card.PLURAL) is Action.GROW
-    assert sorted(g.objects("Apple", "developed")) == ["QuickTime", "iPod"]
-    # nothing was superseded — both are live beliefs
-    assert g.objects("Apple", "developed", status=Status.SUPERSEDED) == []
+    g.ingest("user", "diet", "vegetarian", episode_id="e1")
+    g.ingest("user", "diet", "vegetarian", episode_id="e2")
+    assert g.ingest("user", "diet", "pescatarian", episode_id="e3") is Action.INCUBATE
+    assert g.believe("user", "diet") == "vegetarian"           # unchanged
+    assert g.ingest("user", "diet", "pescatarian", episode_id="e4") is Action.REVISE
+    assert g.believe("user", "diet") == "pescatarian"
 
 
-def test_restating_an_object_consolidates_it():
-    """Repeated same-value evidence firms the belief (support grows) rather than
-    creating rivals."""
+def test_fresh_evidence_no_stale_vote_revival():
+    """A once-held value needs k FRESH episodes to win back — its old votes have expired."""
     g = _g()
-    g.ingest("user", "diet", "vegan", residual=0.0, episode_id="ep1")
-    assert g.ingest("user", "diet", "vegan", residual=0.0, episode_id="ep2") is Action.CONSOLIDATE
-    edge = g.node("user").rel("diet")[0]
-    assert edge.votes == 2 and edge.status is Status.BELIEF
+    g.ingest("user", "diet", "vegetarian", episode_id="e1")
+    g.ingest("user", "diet", "vegetarian", episode_id="e2")     # veg has 2 all-time votes
+    g.ingest("user", "diet", "pescatarian", episode_id="e3")
+    g.ingest("user", "diet", "pescatarian", episode_id="e4")    # -> pescatarian
+    # one fresh "vegetarian" must NOT flip it back despite e1,e2 in history
+    assert g.ingest("user", "diet", "vegetarian", episode_id="e5") is Action.INCUBATE
+    assert g.believe("user", "diet") == "pescatarian"
+    # a second fresh episode reopens the old belief -> REVIVE
+    assert g.ingest("user", "diet", "vegetarian", episode_id="e6") is Action.REVIVE
+    assert g.believe("user", "diet") == "vegetarian"
 
 
-def test_exception_is_incubated_not_discarded_then_promotes():
-    """An isolated conflict is held as PENDING, alive. When it recurs it is
-    promoted — it was a slow-to-accept real change, not a dead exception."""
+def test_plural_accretes_and_coexists():
     g = _g()
-    g.ingest("user", "city", "Shanghai", residual=0.0, episode_id="ep1")
-    g.ingest("user", "city", "Beijing", residual=1.0, episode_id="ep2")   # incubate
-    assert [e.obj for e in g.pending()] == ["Beijing"]      # alive, not swept away
-    assert g.objects("user", "city") == ["Shanghai"]
-    g.ingest("user", "city", "Beijing", residual=1.0, episode_id="ep3")   # recurs -> promote
-    assert g.objects("user", "city") == ["Beijing"]
-    assert g.pending() == []
+    assert g.ingest("Apple", "developed", "iPod", cardinality=Card.PLURAL, episode_id="e1") is Action.ACCRETE
+    assert g.ingest("Apple", "developed", "QuickTime", cardinality=Card.PLURAL, episode_id="e2") is Action.ACCRETE
+    assert g.believe("Apple", "developed") == ["QuickTime", "iPod"]
 
 
-def test_incubated_evidence_can_seed_a_belief_where_none_existed():
-    """Repeated observations about a relation the subject had no belief for still
-    accrue and become the belief — a new schema growing from accumulation."""
+def test_plural_member_retracts_and_revives():
+    """Plural members are not permanent: explicit negative evidence (k) removes one; it can revive."""
     g = _g()
-    # first observation on an empty relation seeds directly
-    assert g.ingest("Ann", "employer", "Acme", residual=1.0, episode_id="ep1") is Action.CONSOLIDATE
-    assert g.objects("Ann", "employer") == ["Acme"]
+    g.ingest("user", "hobby", "climbing", cardinality=Card.PLURAL, episode_id="e1")
+    g.ingest("user", "hobby", "chess", cardinality=Card.PLURAL, episode_id="e2")
+    assert g.ingest("user", "hobby", "climbing", cardinality=Card.PLURAL, polarity="-", episode_id="e3") is Action.INCUBATE
+    assert g.ingest("user", "hobby", "climbing", cardinality=Card.PLURAL, polarity="-", episode_id="e4") is Action.RETRACT
+    assert g.believe("user", "hobby") == ["chess"]             # climbing gone, chess stays
+    assert g.ingest("user", "hobby", "climbing", cardinality=Card.PLURAL, episode_id="e5") is Action.REVIVE
+    assert g.believe("user", "hobby") == ["chess", "climbing"]
 
 
-def test_multi_hop_traversal_over_belief_edges():
-    """The payoff of real edges: an answer reachable by chaining relations that
-    is stored nowhere directly."""
+def test_functional_retract_to_none():
+    """Negative evidence can remove a functional belief with no successor (unemployed)."""
     g = _g()
-    g.ingest("Nick", "coaches", "Real Salt Lake", residual=0.0, episode_id="e1")
-    g.ingest("Real Salt Lake", "plays_sport", "soccer", residual=0.0, episode_id="e2")
-    # "what sport does the team Nick coaches play?" — not stored on Nick at all
+    g.ingest("user", "employer", "Acme", episode_id="e1")
+    g.ingest("user", "employer", "Acme", polarity="-", episode_id="e2")   # incubate-retire
+    assert g.ingest("user", "employer", "Acme", polarity="-", episode_id="e3") is Action.RETRACT
+    assert g.believe("user", "employer") is None
+    # the retracted belief is kept as history, not deleted
+    acme = g.edges[("user", "employer", "Acme", "default")]
+    assert acme.is_past() and acme.pos == {"e1"}
+
+
+def test_context_exception_then_absorbed():
+    """A weekend exception holds only while it differs from the default; when the default
+    catches up to it, the exception is absorbed."""
+    g = _g()
+    g.ingest("user", "diet", "vegetarian", episode_id="e1")
+    g.ingest("user", "diet", "vegetarian", episode_id="e2")
+    g.ingest("user", "diet", "pescatarian", episode_id="e3")
+    g.ingest("user", "diet", "pescatarian", episode_id="e4")               # default = pescatarian
+    assert g.ingest("user", "diet", "vegetarian", context="weekend", episode_id="e5") is Action.SEED
+    assert g.believe("user", "diet", "weekend") == "vegetarian"            # exception active
+    assert g.believe("user", "diet", "weekday") == "pescatarian"           # fallback to default
+    # default reverts to vegetarian -> the weekend exception is absorbed
+    g.ingest("user", "diet", "vegetarian", episode_id="e6")
+    g.ingest("user", "diet", "vegetarian", episode_id="e7")
+    weekend = g.edges[("user", "diet", "vegetarian", "weekend")]
+    assert weekend.absorbed and not weekend.is_current()
+    assert g.believe("user", "diet", "weekend") == "vegetarian"            # now via default
+
+
+def test_conditional_belief_survives():
+    """Two contexts with no default coexist as a stable conditional (weekday office / weekend home)."""
+    g = _g()
+    assert g.ingest("user", "workmode", "office", context="weekday", episode_id="e1") is Action.SEED
+    assert g.ingest("user", "workmode", "home", context="weekend", episode_id="e2") is Action.SEED
+    assert g.believe("user", "workmode", "weekday") == "office"
+    assert g.believe("user", "workmode", "weekend") == "home"
+
+
+def test_oscillation_becomes_contested():
+    """A slot that genuinely oscillates past flip_max is suspended — no forced winner."""
+    g = _g()
+    g.ingest("user", "city", "Beijing", episode_id="c1")
+    g.ingest("user", "city", "Shanghai", episode_id="c2")
+    assert g.ingest("user", "city", "Shanghai", episode_id="c3") is Action.REVISE   # flip 1
+    g.ingest("user", "city", "Beijing", episode_id="c4")
+    assert g.ingest("user", "city", "Beijing", episode_id="c5") is Action.REVIVE    # flip 2 (Beijing returns)
+    g.ingest("user", "city", "Shanghai", episode_id="c6")
+    assert g.ingest("user", "city", "Shanghai", episode_id="c7") is Action.CONTESTED
+    assert g.believe("user", "city") == "UNRESOLVED"
+
+
+def test_asserted_absent_is_k_gated():
+    """One 'not X' about a never-held belief is tentative; two make a firm negative belief."""
+    g = _g()
+    assert g.ingest("user", "haskids", "children", polarity="-", episode_id="e1") is Action.NOOP
+    assert g.ingest("user", "haskids", "children", polarity="-", episode_id="e2") is Action.ASSERT_ABSENT
+    assert g.believe("user", "haskids") == "ABSENT"
+
+
+def test_multi_hop_over_belief_edges():
+    """An answer reachable by chaining relations, stored nowhere directly."""
+    g = _g()
+    g.ingest("Nick", "coaches", "RSL", episode_id="m1")
+    g.ingest("RSL", "plays_sport", "soccer", episode_id="m2")
     assert g.hop("Nick", ["coaches", "plays_sport"]) == ["soccer"]
-    assert g.hop("Nick", ["coaches"]) == ["Real Salt Lake"]
-
-
-def test_objects_are_shared_nodes():
-    """Linking objects as nodes is what makes traversal possible — the object of
-    one edge is the subject of another, one node."""
-    g = _g()
-    g.ingest("Apple", "founded_by", "Steve Jobs", residual=0.0, episode_id="e1")
-    g.ingest("Steve Jobs", "born_in", "San Francisco", residual=0.0, episode_id="e2")
-    assert "Steve Jobs" in g.nodes
-    assert g.hop("Apple", ["founded_by", "born_in"]) == ["San Francisco"]
+    assert g.hop("Nick", ["coaches"]) == ["RSL"]
 
 
 if __name__ == "__main__":
@@ -95,12 +139,12 @@ if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]
     passed = 0
-    for t in tests:
+    for tfn in tests:
         try:
-            t()
-            print(f"PASS {t.__name__}")
+            tfn()
+            print(f"PASS {tfn.__name__}")
             passed += 1
         except Exception:
-            print(f"FAIL {t.__name__}")
+            print(f"FAIL {tfn.__name__}")
             traceback.print_exc()
     print(f"\n{passed}/{len(tests)} passed")
