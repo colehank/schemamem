@@ -120,8 +120,9 @@ src/schemamem/
                     #   cardinality = coupling beta. See docs/design/evolving_graph.md "generative core".
   config.py         # RuntimeConfig — ONE place for base_url/api_key/model/embedding_* (MemoryData-aligned;
                     #   env + from_mapping loaders; /v1 normalisation). Pure stdlib.
-  prompts.yaml      # the L1/L2 prompts as readable block scalars + the rationale for each earned rule
-  prompts.py        # thin LOADER of prompts.yaml -> the same SLOT_MERGE_SYS/CLEAN_SYS/... names (edit the YAML)
+  prompts/          # ONE .md file per L1/L2 prompt (slot_merge/clean/quant/extract/rewrite/answer) +
+                    #   README.md (rationale/invariants). __init__.py is the loader that re-exports the same
+                    #   SLOT_MERGE_SYS/CLEAN_SYS/... names — edit the .md files, not the loader. No dep.
   schema_memory.py  # SchemaMemorySystem — the composed class: __init__ + write API (add_chunk/add_chunks);
                     #   the pipeline stages are mixins so the public API + eval contract are unchanged:
   _llm.py           #   LLMMixin        — chat + embedding helpers (mockable)
