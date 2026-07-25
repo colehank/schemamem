@@ -198,7 +198,8 @@ Ortiz-Tudela) must be re-verified in Zotero with exact venue/year before enterin
 ## The generative core: coupled competition + endogenous prediction error (v2 math)
 
 > **Status: the arbitration MATH, one step ahead of `graph_core.py`'s counting engine.** Prototyped
-> in scratch (`schema_coupled.py`), not yet in the runnable core. This is where "elegant, self-
+> in `docs/design/prototypes/schema_coupled.py` (with `schema_sprt.py`, `schema_proto.py` tracing the
+> progression — see that folder's README), not yet in the runnable core. This is where "elegant, self-
 > consistent, minimal-principle" lands: the dozen actions and the pile of thresholds (k, flip_max,
 > k+1, contested-freeze, the strength hack) collapse into **readings of one generative model**.
 

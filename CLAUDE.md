@@ -84,8 +84,12 @@ reasoning in `docs/design/evolving_graph.md`):
 
 **The frontier keeps the paper's spine and extends it.** One residual signal still drives
 everything; graded expectation still applies where it is valid (functional relations); and the
-five destinations — CONSOLIDATE / GROW / UPDATE / INCUBATE / DISSOLVE — are the residual routed by
-cardinality. Objects becoming first-class nodes also buys **multi-hop** (an answer reachable by
+actions (SEED / ASSIMILATE / ACCRETE / REVISE / RETRACT / REVIVE / CONTESTED / RESOLVE) are the
+residual routed by cardinality **and observation polarity**. The living detail — including the
+generative "v2 math" core where every action becomes a *reading* of one competition model
+(divisively-normalised candidate competition, endogenous residual, cardinality as a coupling β) — is
+in `docs/design/evolving_graph.md`; do not re-derive it here. Objects becoming first-class nodes also
+buys **multi-hop** (an answer reachable by
 chaining relations, stored nowhere directly), which the slot model structurally could not do. KG is
 not the enemy of evolution — *static* triple KG is; a **belief-carrying** graph is not, and that is
 what we build. Leave the possibility space open: the goal is SOTA memory evolution, and the
@@ -108,8 +112,9 @@ For the empirical side (benchmarks, comparisons, and the current experiment plan
 ```
 src/schemamem/
   core.py           # BASELINE L3: per-slot changepoint arbitration. Pure, deterministic, no LLM.
-  graph_core.py     # FRONTIER L3: evolving knowledge graph — five dynamics on one residual signal,
-                    #   routed by relation cardinality; plus multi-hop. Pure, deterministic, no LLM.
+  graph_core.py     # FRONTIER L3: evolving belief graph — value+evidence(±polarity)+intervals+context;
+                    #   actions routed by cardinality x polarity; contested->resolve, revive, multi-hop.
+                    #   Pure, deterministic, no LLM. (generative "v2 math" prototyped in docs/design/prototypes/)
   prompts.py        # validated L1/L2 extraction + rewrite + answer prompts (see "prompt invariants" below)
   schema_memory.py  # SchemaMemorySystem — LLM ingestion + query rendering; the public API + eval contract
   __init__.py       # public exports
@@ -198,7 +203,7 @@ Everything goes through [uv](https://docs.astral.sh/uv/). Do not use bare `pip`/
 ```bash
 uv sync                            # create .venv + install (runtime + dev)
 uv run pytest                      # full test suite (must stay green:
-                                   #   13 core routing + 5 bench_adapters + 2 system = 20 total)
+                                   #   13 core + 5 bench_adapters + 14 system + 13 graph = 45 total)
 uv run ruff check .                # lint
 uv run examples/diet_dialogue.py   # offline end-to-end sanity check
 ```
