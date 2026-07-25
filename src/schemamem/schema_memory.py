@@ -23,9 +23,11 @@ from typing import Optional
 
 try:                                    # package-relative when vendored
     from .core import SchemaGraph, Observation, _differ_in_quantity
+    from .config import RuntimeConfig
     from .prompts import CLEAN_SYS, QUANT_SYS, EXTRACT_SYS, REWRITE_SYS, ANSWER_SYS, SLOT_MERGE_SYS
 except ImportError:                     # flat import in dev
     from core import SchemaGraph, Observation, _differ_in_quantity
+    from config import RuntimeConfig
     from prompts import CLEAN_SYS, QUANT_SYS, EXTRACT_SYS, REWRITE_SYS, ANSWER_SYS, SLOT_MERGE_SYS
 
 
@@ -78,9 +80,10 @@ class SchemaMemorySystem:
     def __init__(
         self,
         *,
-        model: str,
+        model: Optional[str] = None,          # or supply config=RuntimeConfig(model=...)
+        config: Optional[RuntimeConfig] = None,
         retrieve_k: int = 10,
-        embedding_model: str = "Qwen3-Embedding-4B",
+        embedding_model: Optional[str] = None,
         embed_batch: int = 256,          # inputs per embeddings request (query-time ranking)
         # Characters of raw episode text appended after the schema gist at query
         # time. 0 disables the verbatim layer (schema-only, the previous behaviour).
@@ -118,7 +121,13 @@ class SchemaMemorySystem:
         state_path: Optional[str] = None,
         client=None,
     ):
-        self.model = model
+        # Unified config: an explicit `config` is the base; loose kwargs override it (back-compat).
+        cfg = (config or RuntimeConfig()).merged(
+            model=model, api_key=api_key, base_url=api_base,
+            embedding_model=embedding_model, embedding_base_url=embedding_api_base,
+            embedding_api_key=embedding_api_key)
+        self.config = cfg
+        self.model = cfg.model
         self.retrieve_k = int(retrieve_k)
         self.change_threshold = float(change_threshold)
         self.reconstruction_tolerance = float(reconstruction_tolerance)
@@ -130,7 +139,7 @@ class SchemaMemorySystem:
         self.enable_forgetting = bool(enable_forgetting)
         self.enable_slot_merge = bool(enable_slot_merge)
         self.slot_merge_mode = slot_merge_mode
-        self.embedding_model = embedding_model
+        self.embedding_model = cfg.embedding_model
         self._emb_cache: dict = {}
         self._embed_batch = int(embed_batch)
         self.verbatim_budget = int(verbatim_budget)
@@ -140,22 +149,20 @@ class SchemaMemorySystem:
         self._pending_speakers = None
         self.state_path = state_path
 
-        # LLM client (OpenAI-compatible). Injected in tests; otherwise built from
-        # explicit args, falling back to the standard OPENAI_* environment variables.
-        # base_url is normalized to end in /v1 (the OpenAI SDK posts to <base>/chat/
-        # completions, so a gateway root without /v1 silently 404s).
+        # LLM clients (OpenAI-compatible). Injected in tests; otherwise built from the unified
+        # config (which already resolved env vars and normalised the /v1 suffix). Embeddings get
+        # their OWN client when the config points them at a different endpoint (e.g. a dedicated
+        # embedding server), reusing the chat client when they coincide.
         if client is not None:
-            self._client = client
+            self._client = self._embed_client = client
         else:
-            import os
             from openai import OpenAI
-            key = api_key or os.environ.get("OPENAI_API_KEY") or "EMPTY"
-            base = api_base or os.environ.get("OPENAI_BASE_URL")
-            if base:
-                base = base.rstrip("/")
-                if not base.endswith("/v1"):
-                    base = base + "/v1"
-            self._client = OpenAI(api_key=key, base_url=base)
+            self._client = OpenAI(api_key=cfg.api_key, base_url=cfg.base_url)
+            if cfg.embedding_base_url == cfg.base_url and cfg.embedding_api_key == cfg.api_key:
+                self._embed_client = self._client
+            else:
+                self._embed_client = OpenAI(api_key=cfg.embedding_api_key,
+                                            base_url=cfg.embedding_base_url)
 
         # L3 graph with an LLM-backed belief rewriter (accommodation).
         # reconstruction_tolerance maps to core epsilon; forgetting is off unless enabled.
@@ -228,7 +235,7 @@ class SchemaMemorySystem:
         if text in self._emb_cache:
             return self._emb_cache[text]
         try:
-            r = self._client.embeddings.create(model=self.embedding_model, input=text)
+            r = self._embed_client.embeddings.create(model=self.embedding_model, input=text)
             vec = r.data[0].embedding
         except Exception:
             vec = None
@@ -249,7 +256,7 @@ class SchemaMemorySystem:
         for i in range(0, len(missing), self._embed_batch):
             batch = missing[i:i + self._embed_batch]
             try:
-                r = self._client.embeddings.create(model=self.embedding_model, input=batch)
+                r = self._embed_client.embeddings.create(model=self.embedding_model, input=batch)
                 vecs = [d.embedding for d in sorted(r.data, key=lambda d: d.index)]
             except Exception:
                 vecs = []

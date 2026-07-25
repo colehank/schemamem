@@ -118,9 +118,12 @@ src/schemamem/
   coupled_core.py   # FRONTIER L3 (v2, GENERATIVE): the same dynamics as readings of ONE model —
                     #   divisively-normalised candidate competition p(v), endogenous residual −log p(v),
                     #   cardinality = coupling beta. See docs/design/evolving_graph.md "generative core".
-  prompts.py        # validated L1/L2 extraction + rewrite + answer prompts (see "prompt invariants" below)
+  config.py         # RuntimeConfig — ONE place for base_url/api_key/model/embedding_* (MemoryData-aligned;
+                    #   env + from_mapping loaders; /v1 normalisation). Pure stdlib.
+  prompts.yaml      # the L1/L2 prompts as readable block scalars + the rationale for each earned rule
+  prompts.py        # thin LOADER of prompts.yaml -> the same SLOT_MERGE_SYS/CLEAN_SYS/... names (edit the YAML)
   schema_memory.py  # SchemaMemorySystem — LLM ingestion + query rendering; the public API + eval contract
-  __init__.py       # public exports
+  __init__.py       # public exports (incl. RuntimeConfig)
 tests/              # test_core.py (slot routing) + test_graph_core.py (graph dynamics + hops),
                     #   both no-LLM; test_system.py (adapter contract, mock LLM);
                     #   test_bench_adapters.py (FC subject parser, pure-Python)

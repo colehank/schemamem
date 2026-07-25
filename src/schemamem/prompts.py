@@ -1,212 +1,32 @@
-"""Validated LLM prompts for SchemaMem's L1/L2 layer.
+"""Loader for SchemaMem's L1/L2 prompts, externalised to ``prompts.yaml``.
 
-These three rules in EXTRACT_SYS were each added to fix a concrete failure
-observed against a real endpoint (see method reflection / memory):
-  1. do not decompose a belief into its defining parts;
-  2. candidate_id must name a concrete POSITIVE value, never a negation of the
-     old belief (negations let any deviation merge together, mixing exceptions
-     with genuine change);
-  3. pred_error == 0.0  =>  candidate_id is null.
+The prompt text now lives in ``prompts.yaml`` (readable block scalars, with the rationale for
+each hard-won rule kept in the comments beside it) instead of inline Python strings. This module
+loads them and re-exports the SAME constant names the rest of the package imports —
+``SLOT_MERGE_SYS`` / ``CLEAN_SYS`` / ``QUANT_SYS`` / ``EXTRACT_SYS`` / ``REWRITE_SYS`` /
+``ANSWER_SYS`` — so nothing downstream changes.
+
+Editing a prompt = editing ``prompts.yaml``; do not paste prompt text back into this file. If you
+change ``EXTRACT_SYS``, re-run ``tests/test_system.py`` (its invariants are load-bearing).
 """
+from pathlib import Path
 
-SLOT_MERGE_SYS = """You decide whether a NEW attribute-slot for one entity is the SAME ATTRIBUTE as one
-of the entity's EXISTING slots, and should therefore be merged into it.
+import yaml
 
-SAME ATTRIBUTE means they track the same underlying property of the entity — e.g. "artwork"
-and "artistic_expression" and "relaxation_method" whose values are all about the person's
-painting are ONE attribute (their hobby / creative outlet).
+_PROMPTS = yaml.safe_load((Path(__file__).with_name("prompts.yaml")).read_text(encoding="utf-8"))
 
-NOT the same attribute: slots that merely share a TOPIC but track different properties — e.g.
-"volunteering_experience", "community_membership", and "art_show_plan" can all be about LGBTQ
-life yet are three distinct attributes (what they did, where they belong, what they plan).
-Same topic is NOT enough; the property itself must be the same.
 
-You are given the new slot (name + value) and the list of existing slots (name + current belief).
-Return STRICT JSON: {"merge_into": "<existing slot name>"} if the new slot is the same attribute
-as exactly one existing slot, else {"merge_into": null}. When in doubt, prefer null (keep separate)
-— a wrong merge destroys a real distinction, a missed merge only leaves a duplicate slot.
-"""
+def _p(key: str) -> str:
+    return _PROMPTS[key].rstrip("\n")
 
-CLEAN_SYS = """You are the L1 cleaning stage. Given a raw chunk of dialogue (one episode), rewrite it
-into a list of self-contained FACTS. Each fact must stand on its own with no outside context.
 
-A fact is a statement about a DURABLE ATTRIBUTE of an entity — a preference, trait, relationship,
-status, plan, or an ongoing interest — NOT a play-by-play of everything that happened. Aim for a few
-high-value facts per episode, not one per sentence.
+SLOT_MERGE_SYS = _p("slot_merge")
+CLEAN_SYS = _p("clean")
+QUANT_SYS = _p("quant")
+EXTRACT_SYS = _p("extract")
+REWRITE_SYS = _p("rewrite")
+ANSWER_SYS = _p("answer")
 
-RULES:
-- Resolve every reference: no "it/she/that/last week" — write the concrete entity and, when the
-  dialogue gives one, an explicit time.
-- Bind each fact to its SUBJECT: the entity the fact is about. Usually the speaker who said it, but
-  if a speaker reports something about the other person, the subject is that other person.
-- The assistant's turns carry TWO different kinds of content. Decide which, per turn:
-  (a) RESTATING a fact about the user ("Congrats on completing seven short stories!", "trying your
-      fourth Korean restaurant") -> emit a fact about the USER. The confirmed value is the fact.
-  (b) CONTRIBUTING new content the user did not supply — a recommendation, a name, a title, a
-      quotation, a place, a figure, an instruction ("I'd suggest Roscioli, a deli near the Vatican",
-      "Use a Pilsner or Lager", "That would be the GR-90 trail"). Here the PAYLOAD IS THE ANSWER and
-      must survive verbatim. Emit a fact that STATES THE CONTENT.
-      SUBJECT IS THE TOPIC THE CONTENT IS ABOUT — never "assistant", never the user. The topic is
-      the thing being discussed: the dish, the park, the book, the place. "The GR-90 trail was
-      recommended for the Natural Park of Moncayo" has SUBJECT "Natural Park of Moncayo"; "A Pilsner
-      or Lager was recommended for Seco de Cordero" has SUBJECT "Seco de Cordero". Filing these
-      under "assistant" would pile every recommendation onto one entity that no later question ever
-      names, making them unretrievable. NEVER collapse such a turn into a statement about what the
-      user wants or is interested in: "user is looking for advice on delis" DESTROYS the answer.
-  Either way, do not skip a turn just because the assistant spoke it.
-- Third parties count. If the user mentions someone else ("my friend Rachel just moved to the
-  suburbs"), emit a fact whose SUBJECT is that third party (Rachel), not the user.
-- NARRATIVE / NON-DIALOGUE INPUT: if the chunk is not a conversation but a declarative statement
-  about the world (e.g. "Hines Ward plays the position of wide receiver.", "The capital of Romania
-  is Bucharest."), there is no speaker to bind to — SUBJECT is the entity the sentence is about
-  (the grammatical subject or, in "The X of Y is Z" constructions, Y). For "Hines Ward plays wide
-  receiver" the subject is "Hines Ward"; for "The chairperson of Fatah is Mahmoud Abbas" the
-  subject is "Fatah" (the entity whose attribute is being asserted), not the person named as the
-  value. Ignore the `speakers` hint in this case.
-- CONSOLIDATE, do not enumerate — but ONLY WITHIN ONE ATTRIBUTE OF ONE SUBJECT. If several
-  utterances speak to the SAME attribute of the same subject, emit ONE fact for that attribute, not
-  one per utterance. E.g. many remarks about painting a sunset, drawing flowers, and art bringing
-  joy → one fact like "Caroline enjoys visual art (painting, drawing) as a way to express her
-  feelings", NOT five facts.
-  This rule NEVER merges across different subjects or different attributes, and it NEVER licenses
-  dropping a fact. If the chunk is a LIST of independent assertions about many different entities
-  (a numbered fact list, an enumeration of world facts), emit ONE FACT PER ASSERTION — consolidation
-  does not apply, because no two of them share a subject-attribute pair. Losing list items is the
-  single worst failure mode of this stage: a fact never emitted can never be arbitrated.
-- A notable one-off EVENT is worth a fact only if it reveals a durable attribute; otherwise drop it.
-  Do not create a separate fact for each object/activity mentioned in passing.
-- ALWAYS keep QUANTIFIABLE / COMPARABLE state, even when it looks minor: a COUNT ("owns 4 bikes",
-  "has tried four Korean restaurants", "wrote seven short stories", "on page 220"), a FREQUENCY
-  ("yoga three times a week"), an AMOUNT ("pre-approved for $400,000"), a CURRENT LOCATION ("moved to
-  the suburbs"), a schedule DAY/TIME ("cocktail class on Friday"). These scalar attributes are exactly
-  what changes over time — capture the value as the fact (e.g. "The user currently owns four bikes"),
-  not the surrounding chatter. When a later episode restates such an attribute with a NEW value,
-  still emit it: the change is the point.
-- Drop pure filler: greetings, back-channels, and narration that asserts nothing durable.
-- Do not invent content; stay faithful to what the subject conveyed.
-
-Return STRICT JSON: {"facts": [{"subject": "<entity name>", "text": "<self-contained fact>"}, ...]}.
-Consolidate genuinely redundant chatter, but NEVER drop a concrete scalar value (a count, amount,
-frequency, location, day, page) to save space — those specific values are the whole point. Empty
-list only if the chunk asserts nothing durable.
-"""
-
-QUANT_SYS = """You extract QUANTIFIABLE STATE about entities from one episode of dialogue — the
-facts most likely to CHANGE over time and be asked about later. Look specifically for:
-  - counts ("owns 4 bikes", "tried four Korean restaurants", "written seven short stories"),
-  - amounts ("pre-approved for $400,000"),
-  - frequencies ("yoga three times a week"),
-  - durations / progress ("spent 10-12 hours", "on page 220", "writing for three months"),
-  - current locations / schedules ("moved to the suburbs", "class on Friday").
-CRITICAL:
-- Mine the ASSISTANT's turns too: they often confirm the user's number ("Congratulations on
-  completing seven short stories!"). The confirmed value is a fact about the user.
-- A value about a THIRD PARTY the user mentions ("my friend Rachel moved to the suburbs") is a fact
-  whose subject is that third party.
-- Capture values stated in RECALL or QUESTION form, not just fresh declarations. A number wrapped in
-  "remember when I got pre-approved for $400,000?", "as I mentioned, I now have four bikes", or
-  "you know my 25:50 5K time" still asserts the value — extract it ("The user was pre-approved for
-  $400,000"). People restate a changed number casually, and that restatement is often the update, so
-  never skip a number just because it appears in a reminiscing or rhetorical sentence.
-- Write each as a self-contained sentence carrying the explicit value (resolve all references).
-- Only quantifiable/comparable state. If the episode has none, return an empty list.
-Return STRICT JSON: {"facts": [{"subject": "<entity>", "text": "<fact with the explicit value>"}, ...]}.
-"""
-
-EXTRACT_SYS = """You maintain a structured belief ("schema") about entities in a conversation.
-A schema has SLOTS (attributes of an entity, e.g. diet, location, job). Each slot holds ONE current
-belief value. Your job: from a NEW message, extract assertions and judge each against the schema.
-
-CRITICAL RULES:
-- COVERAGE FIRST. When the FACTS block is a list of independent declarative statements (one entity
-  and one attribute each, as in "3. QuickTime was developed by Apple Inc."), emit EXACTLY ONE
-  assertion PER LISTED FACT, in order, dropping none and merging none. These are not conversational
-  chatter to be summarised — each line is already a separate assertion about a separate entity, and
-  a line you skip becomes an entity the system can never answer about. Do not stop early; if the
-  list has N items your output has N assertions.
-- One assertion = one entity's one slot taking one value. Extract assertions for ANY entity/slot the
-  message speaks to, INCLUDING slots not yet in the schema (mint a new stable snake_case slot name).
-- "entity" MUST be a bare name of a person or thing (e.g. "Caroline", "user"). NEVER write a compound
-  like "Caroline.hobby" or "Entity.slot" in the entity field. If KNOWN ENTITIES are listed, reuse one
-  of those exact names rather than inventing a variant.
-- REUSE an existing slot name from CURRENT SCHEMA when the message speaks to the same attribute; only
-  mint a new slot for a genuinely new attribute. Keep slots coarse (e.g. one "hobby" slot, not
-  "hobby", "hobby_effect", "hobby_reason"). Do not create near-duplicate slots.
-- Only emit an assertion for a durable attribute/belief about an entity (a preference, trait, status,
-  plan). Skip one-off pleasantries and narration that do not update a belief.
-- A QUANTIFIABLE STATE is ALWAYS a durable slot, even when the sentence sounds like a passing remark:
-  a running COUNT ("tried four Korean restaurants" -> slot=korean_restaurants_tried, value="four";
-  "written seven short stories" -> slot=short_stories_written, value="seven"), an AMOUNT
-  ("pre-approved for $400,000" -> slot=loan_preapproval_amount), a FREQUENCY ("yoga three times a
-  week"), a PROGRESS value ("on page 220"). The number IS the belief — it is exactly what will change
-  later. Name the slot after the thing being counted/measured, and put the value (the number) in the
-  value field. Never drop a counted/measured value as "one-off narration".
-- Do NOT decompose a single belief into its parts. "I'm a strict vegetarian (no meat, eggs, dairy)"
-  is ONE assertion: slot=diet, value="strict vegetarian". The no-meat/eggs/dairy are its DEFINITION,
-  not separate violating values.
-- pred_error is a 3-valued label mapped to a number, scored against the slot's CURRENT belief:
-    * 0.0  = consistent: the value matches / re-affirms the current belief (or the slot has no
-             belief yet, so this seeds it).
-    * 0.5  = partial: related to the belief and neither a clean match nor a clear contradiction
-             (a nuance, elaboration, or partial shift). Recorded but does NOT drive a belief change.
-    * 1.0  = conflict: the value clearly contradicts / supersedes the current belief.
-  If the message is irrelevant to the slot, emit no assertion (the "irrelevant" class = drop).
-- source_fact_index: the 0-based index (into the FACTS list below) of the SINGLE fact this assertion
-  was drawn from. This ties the assertion to its exact evidence sentence — always set it correctly.
-- candidate_id: a SHORT stable key naming the underlying NEW value this assertion supports.
-    * matches current belief -> null
-    * expresses the SAME underlying new value as an existing open candidate -> REUSE that key
-      (e.g. "started fish", "salmon", "pescatarian" all support candidate "fish")
-    * otherwise mint a new short key.
-- A candidate_id MUST name a concrete POSITIVE value, never a negation of the old belief.
-  Bad: "not_vegetarian", "no_longer_X". Good: "meat", "fish", "keto". If a message only says the
-  old belief is violated without naming the new value, use the most specific value mentioned
-  (e.g. "had a steak" -> candidate "meat", value "ate meat"), not a negation.
-- candidate_id is ONLY for conflicts: if pred_error is 0.0 or 0.5, candidate_id MUST be null.
-  Only a 1.0 conflict names a candidate (the concrete positive new value).
-- Your input is a list of already-cleaned FACTS, each prefixed with its subject entity in brackets,
-  e.g. "[Caroline] Caroline started eating fish in May 2023". Use that bracketed subject as the
-  "entity" for assertions drawn from that fact — do not reassign a fact to a different entity.
-Return STRICT JSON. Each assertion is an object with EXACTLY these six keys — "slot" and "value" are
-literal key names, NOT the attribute itself (never write {"diet":"vegan"}; write
-{"slot":"diet","value":"vegan"}):
-{"assertions":[
-  {"entity":"Caroline","slot":"diet","value":"pescatarian","pred_error":1.0,"candidate_id":"fish","source_fact_index":2}
-]}
-Empty list if nothing.
-"""
-
-# Accommodation: rewrite old belief + corroborated new evidence into a clean expectation.
-REWRITE_SYS = """A user's belief about one attribute has genuinely changed. Given the OLD belief and the
-new corroborating observations, write the NEW belief as a single concise value that best captures the
-current state, reconciling old and new where sensible (e.g. old="strict vegetarian" + evidence about
-eating fish -> "pescatarian"). Reply with ONLY the new value, no punctuation or explanation.
-"""
-
-# Query-time answering over rendered schema context.
-ANSWER_SYS = """Answer the question using only the provided memory context. Each attribute is shown
-in two layers:
-  - "current" = the authoritative present value (after any evolution). "previously" = older values
-    that have been SUPERSEDED. "exception" = an isolated past event that did NOT change the belief.
-  - "evidence" = the original time-anchored sentences behind the attribute. These include BOTH the
-    old and new wording, so an evidence line may state a value that is now out of date.
-RULES:
-- MEMORY OVERRIDES WORLD KNOWLEDGE. The context is the only source of truth. If it states something
-  that contradicts what you know about the real world, ANSWER FROM THE CONTEXT ANYWAY, verbatim.
-  A memory system exists to report what was recorded, not what is generally true: if the context
-  says the goaltender position belongs to pesäpallo, the answer is pesäpallo, not ice hockey; if it
-  says the president of Russia is Donald Trump, that is the answer. Never substitute a fact you
-  believe to be correct for one the context asserts, and never refuse because the context looks
-  wrong. Only say the information is absent when the context genuinely does not contain it.
-- For a question about the CURRENT state ("how many... do I have now", "how often do I..."), the
-  answer is the "current" value. NEVER answer with a "previously"/superseded value or an older
-  "evidence" line when a "current" value is present — current always wins on conflict.
-- Use "evidence" only to recover a specific detail (an exact date, wording, or item) that the
-  current value does not spell out — never to override the current value.
-- The PHRASING of an evidence line is irrelevant to which value is current. An older value may be
-  stated assertively ("set a personal best of 27:12") while the newer value is phrased tentatively
-  ("hoping to beat my best of 25:50"); the system has already resolved which is current. Report the
-  "current" value REGARDLESS of how confident or factual an evidence sentence sounds. Do not reason
-  about which sentence sounds more like an accomplished fact — trust "current".
-- Use "previously" only for explicitly past-tense questions ("what did I used to...").
-- Answer with the shortest phrase that directly answers the question. Be concise."""
+__all__ = [
+    "SLOT_MERGE_SYS", "CLEAN_SYS", "QUANT_SYS", "EXTRACT_SYS", "REWRITE_SYS", "ANSWER_SYS",
+]
