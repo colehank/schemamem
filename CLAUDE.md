@@ -112,9 +112,12 @@ For the empirical side (benchmarks, comparisons, and the current experiment plan
 ```
 src/schemamem/
   core.py           # BASELINE L3: per-slot changepoint arbitration. Pure, deterministic, no LLM.
-  graph_core.py     # FRONTIER L3: evolving belief graph — value+evidence(±polarity)+intervals+context;
-                    #   actions routed by cardinality x polarity; contested->resolve, revive, multi-hop.
-                    #   Pure, deterministic, no LLM. (generative "v2 math" prototyped in docs/design/prototypes/)
+  graph_core.py     # FRONTIER L3 (v1, COUNTING): evolving belief graph — value+evidence(±polarity)+
+                    #   intervals+context; actions routed by cardinality x polarity; contested->resolve,
+                    #   revive, multi-hop; Resolver (entity/relation canon) + event-time. Pure, no LLM.
+  coupled_core.py   # FRONTIER L3 (v2, GENERATIVE): the same dynamics as readings of ONE model —
+                    #   divisively-normalised candidate competition p(v), endogenous residual −log p(v),
+                    #   cardinality = coupling beta. See docs/design/evolving_graph.md "generative core".
   prompts.py        # validated L1/L2 extraction + rewrite + answer prompts (see "prompt invariants" below)
   schema_memory.py  # SchemaMemorySystem — LLM ingestion + query rendering; the public API + eval contract
   __init__.py       # public exports
@@ -203,7 +206,7 @@ Everything goes through [uv](https://docs.astral.sh/uv/). Do not use bare `pip`/
 ```bash
 uv sync                            # create .venv + install (runtime + dev)
 uv run pytest                      # full test suite (must stay green:
-                                   #   13 core + 5 bench_adapters + 14 system + 17 graph = 49 total)
+                                   #   13 core + 5 bench + 14 system + 17 graph + 8 coupled = 57 total)
 uv run ruff check .                # lint
 uv run examples/diet_dialogue.py   # offline end-to-end sanity check
 ```
