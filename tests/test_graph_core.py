@@ -5,7 +5,7 @@ revise / retract / accrete / revive, plus the soundness fixes — fresh-evidence
 counting (no stale-vote revival), context fallback + absorption, contested
 suspension, k-gated negatives — and multi-hop reachability.
 """
-from schemamem.graph_core import EvolvingGraph, Action, Card
+from schemamem.graph_core import EvolvingGraph, Action, Card, Resolver
 
 
 def _g():
@@ -157,6 +157,50 @@ def test_multi_hop_over_belief_edges():
     g.ingest("RSL", "plays_sport", "soccer", episode_id="m2")
     assert g.hop("Nick", ["coaches", "plays_sport"]) == ["soccer"]
     assert g.hop("Nick", ["coaches"]) == ["RSL"]
+
+
+def test_relation_canonicalisation():
+    """Synonym relations must land in ONE slot and compete — else both stay 'current' (wrong)."""
+    r = Resolver(aliases={"lives_in": "home_city", "resides_in": "home_city"})
+    g = EvolvingGraph(resolver=r)
+    g.ingest("user", "lives_in", "Beijing", episode_id="e1")
+    g.ingest("user", "resides_in", "Shanghai", episode_id="e2")
+    g.ingest("user", "resides_in", "Shanghai", episode_id="e3")     # supersedes via the shared slot
+    assert g.believe("user", "home_city") == "Shanghai"
+    assert g.believe("user", "lives_in") == "Shanghai"              # query via the alias resolves too
+
+
+def test_entity_canonicalisation_enables_multihop():
+    """'Apple' and 'Apple Inc.' must be one node or the chain (and multi-hop) breaks."""
+    r = Resolver(aliases={"Apple Inc.": "Apple"})
+    g = EvolvingGraph(resolver=r)
+    g.ingest("Apple Inc.", "founded_by", "Jobs", episode_id="e1")
+    g.ingest("Jobs", "born_in", "SF", episode_id="e2")
+    assert g.hop("Apple", ["founded_by", "born_in"]) == ["SF"]
+    assert g.believe("Apple Inc.", "founded_by") == "Jobs"
+
+
+def test_fuzzy_resolver_merges_near_duplicates():
+    """An injected similarity (stand-in for an embedding cosine) merges near-duplicate surface forms."""
+    def norm(s):
+        return s.lower().replace(".", "").replace(" ", "")
+
+    def sim(a, b):
+        return 1.0 if norm(a) == norm(b) else 0.0
+    g = EvolvingGraph(resolver=Resolver(similarity=sim, threshold=0.9))
+    g.ingest("Apple", "ceo", "Cook", episode_id="e1")
+    g.ingest("apple.", "ceo", "Cook", episode_id="e2")              # near-dup subject -> merged
+    ceo_edges = [e for e in g.beliefs() if e.relation == "ceo"]
+    assert len(ceo_edges) == 1 and ceo_edges[0].subject == "Apple"
+
+
+def test_event_time_onset():
+    """Intervals stamp EVENT time (when it held), not ingestion order — needed for temporal QA."""
+    g = EvolvingGraph()
+    g.ingest("user", "home_city", "Beijing", episode_id="e1", t=2)  # "moved to Beijing in year 2"
+    g.ingest("user", "employer", "Acme", episode_id="e2", t=7)      # "joined Acme in year 7"
+    assert g.onset("user", "home_city", "Beijing") == 2
+    assert g.onset("user", "employer", "Acme") == 7
 
 
 if __name__ == "__main__":

@@ -203,7 +203,7 @@ Everything goes through [uv](https://docs.astral.sh/uv/). Do not use bare `pip`/
 ```bash
 uv sync                            # create .venv + install (runtime + dev)
 uv run pytest                      # full test suite (must stay green:
-                                   #   13 core + 5 bench_adapters + 14 system + 13 graph = 45 total)
+                                   #   13 core + 5 bench_adapters + 14 system + 17 graph = 49 total)
 uv run ruff check .                # lint
 uv run examples/diet_dialogue.py   # offline end-to-end sanity check
 ```

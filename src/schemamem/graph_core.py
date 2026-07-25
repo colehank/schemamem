@@ -130,21 +130,63 @@ class Edge:
         return "EMPTY"
 
 
+class Resolver:
+    """Canonicalises surface forms to one node before arbitration — the load-bearing eval risk.
+
+    Without it, "Apple"/"Apple Inc." are two nodes (multi-hop breaks) and "lives_in"/"resides_in"
+    are two slots that never compete (both stay "current", which is wrong). ``aliases`` are exact
+    synonyms; ``similarity`` (injected, e.g. an embedding cosine) fuzzily merges a new form with an
+    already-seen one above ``threshold``. Deterministic and LLM-free — the caller supplies similarity.
+    """
+
+    def __init__(self, aliases=None, similarity=None, threshold: float = 0.85):
+        self.aliases = dict(aliases or {})
+        self.similarity = similarity
+        self.threshold = threshold
+
+    def canon(self, name, known: set, learn: bool = True):
+        if name in self.aliases:
+            c = self.aliases[name]
+        elif self.similarity is not None and name not in known:
+            best, best_s = None, self.threshold
+            for k in known:
+                s = self.similarity(name, k)
+                if s >= best_s:
+                    best, best_s = k, s
+            c = best if best is not None else name
+        else:
+            c = name
+        if learn:
+            known.add(c)
+        return c
+
+
 class EvolvingGraph:
     """The frontier belief graph and its per-relation arbitration engine.
 
     k        : distinct FRESH episodes needed to change a standing belief (identifiability floor).
     flip_max : after this many supersessions in one slot, a further overturn marks it CONTESTED.
+    resolver : optional entity/relation canonicaliser applied to every observation (see Resolver).
     """
 
-    def __init__(self, k: int = 2, flip_max: int = 2):
+    def __init__(self, k: int = 2, flip_max: int = 2, resolver: "Resolver | None" = None):
         self.k = k
         self.flip_max = flip_max
+        self.resolver = resolver
         self.edges: dict = {}          # (subject, relation, obj, ctx) -> Edge
         self.card_of: dict = {}        # relation -> declared cardinality
         self.flips: dict = {}          # (subject, relation, ctx) -> supersession count
         self.contested: set = set()    # {(subject, relation, ctx)}
         self._clock: int = 0           # monotonic tick; the fallback timestamp for intervals
+        self._entities: set = set()    # canonical entity/literal nodes seen
+        self._relations: set = set()   # canonical relations seen
+
+    # -- canonicalisation ----------------------------------------------------
+    def _cent(self, name, learn: bool = True):
+        return self.resolver.canon(name, self._entities, learn) if self.resolver else name
+
+    def _crel(self, rel, learn: bool = True):
+        return self.resolver.canon(rel, self._relations, learn) if self.resolver else rel
 
     # -- structure -----------------------------------------------------------
     def edge(self, subject, relation, obj, ctx, card) -> Edge:
@@ -188,12 +230,17 @@ class EvolvingGraph:
         """Route one observation and mutate the graph. Returns the Action taken.
 
         polarity  : "+" asserts the belief is PRESENT, "−"/"-" asserts it is ABSENT.
+        t         : the EVENT time (when the fact holds) — it stamps the validity intervals, so
+                    "I moved to Beijing last year" said today records last year, not today. Pass a
+                    consistent event time for all calls, or None for all (an internal clock fills in).
+                    Routing never uses t (it counts episodes), so out-of-band event times are safe.
         The residual is structural — a positive object that differs from the current belief is a
         conflict; one that equals it is a restatement.
         """
         self._clock += 1
         if t is None:
             t = self._clock                 # a real timestamp so closed intervals actually close
+        subject, obj, relation = self._cent(subject), self._cent(obj), self._crel(relation)
         self.card_of.setdefault(relation, cardinality)
         e = self.edge(subject, relation, obj, context, cardinality)
         was_past = e.is_past()
@@ -286,6 +333,7 @@ class EvolvingGraph:
     def believe(self, subject, relation, context: str = DEFAULT):
         """Answer for (subject, relation) under a context: the current object(s), the default as
         a fallback, an ``UNRESOLVED``/``ABSENT`` marker, or ``None`` if unknown."""
+        subject, relation = self._cent(subject, learn=False), self._crel(relation, learn=False)
         if (subject, relation, DEFAULT) in self.contested or (subject, relation, context) in self.contested:
             return "UNRESOLVED"
         card = self.card_of.get(relation)
@@ -308,13 +356,22 @@ class EvolvingGraph:
     def hop(self, start, path):
         """Multi-hop traversal along current belief edges. ``path`` is a list of relations;
         returns the objects reachable from ``start`` by following them in order."""
-        frontier = {start}
+        frontier = {self._cent(start, learn=False)}
         for relation in path:
+            relation = self._crel(relation, learn=False)
             frontier = {e.obj for e in self.edges.values()
                         if e.subject in frontier and e.relation == relation and e.is_current()}
             if not frontier:
                 break
         return sorted(frontier)
+
+    def onset(self, subject, relation, obj, context: str = DEFAULT):
+        """The EVENT time a belief first began (start of its first validity interval) — the answer
+        to 'when did X become true', which needs event-time stamps, not the ingestion order."""
+        subject, obj = self._cent(subject, learn=False), self._cent(obj, learn=False)
+        relation = self._crel(relation, learn=False)
+        e = self.edges.get((subject, relation, obj, context))
+        return e.intervals[0][0] if (e and e.intervals) else None
 
     def beliefs(self, subject=None) -> list:
         """All current belief edges (optionally for one subject) — the live memory."""
