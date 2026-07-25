@@ -195,6 +195,65 @@ mechanism. Context and restructuring are design direction, not yet implemented i
 Citations here (Rumelhart-Norman, Bouton, Preston, Bjork, context-gating, Tse, Sinclair,
 Ortiz-Tudela) must be re-verified in Zotero with exact venue/year before entering the paper.
 
+## The generative core: coupled competition + endogenous prediction error (v2 math)
+
+> **Status: the arbitration MATH, one step ahead of `graph_core.py`'s counting engine.** Prototyped
+> in scratch (`schema_coupled.py`), not yet in the runnable core. This is where "elegant, self-
+> consistent, minimal-principle" lands: the dozen actions and the pile of thresholds (k, flip_max,
+> k+1, contested-freeze, the strength hack) collapse into **readings of one generative model**.
+
+**The model.** Each relation holds candidate values, each with a recency-decayed evidence mass `m_v`.
+The schema's expectation that the next observation asserts `v` is a **divisively-normalised
+competition**:
+
+```
+p(v) = e^{m_v} / ( M0 + e^{m_v} + β · Σ_{j≠v} e^{m_j} )
+```
+
+`M0` is a null/prior ("don't know"); `β` is the coupling. An observation of `v` updates its mass:
+
+```
+residual(v) = −log p(v)                         # ENDOGENOUS — read off the state, no external label
+gain(v)     = g_min + g_amp · (2·p(v) − 1)²      # U-shaped in expectancy
+m_v ← m_v ± gain(v)                              # + for present, − for absent
+```
+
+**Everything becomes a reading of `p` and `m`:**
+
+| construct | is just |
+|---|---|
+| **prediction residual** | `−log p(v)`, from the mass — the "one signal" is now *literal*, not an LLM label |
+| **cardinality** | the coupling `β`: `β=1` FUNCTIONAL (winner-take-all), `β=0` PLURAL (coexist), between = SOFT |
+| **REVISE = RETRACT ⊕ ACCRETE** | asserting `v` raises `p(v)` and, via the shared denominator, lowers rivals' `p` — one step |
+| **SEED / ASSIMILATE / ACCRETE / REVISE / RETRACT** | a mass crossing / leaving the belief threshold `P_on` |
+| **INCUBATE / CONTESTED** | the region `p ≈ 0.5` — also the *bottom of the U*, where the gain is smallest |
+| **RESOLVE** | one mass pulling clear → `p` rises → confidence (`p_top1 − p_top2`) grows |
+| **U-shape** (Quent/Greve/Henson) & the old "0.5 no-op" | the shape of `gain(p)`: strong at the expected and surprising extremes, weak in the ambiguous middle |
+| **forgetting** | inherent — a relation stores only the running mass (the *sufficient statistic*), never the raw episodes |
+| **k≥2** | the one hard floor kept explicit (identifiability): a *change* needs ≥ 2 distinct fresh episodes |
+
+**Context is backoff**, not pooling: a specific context answers from its own evidence if it has any,
+else falls back to the default — the exception overrides only where it has spoken (weekday → default,
+weekend → its own). Absorption is automatic (when the exception stops differing, its readout equals
+the default's).
+
+**Grounding that is real, not decorative.** The denominator is **divisive normalisation** — Carandini
+& Heeger's "canonical cortical computation"; the gain is **predictive coding** (update ∝ prediction
+error). A sturdier spine than the BOCPD/MDL lenses invoked earlier.
+
+**Honest trade.** Structural elegance (one generative model) is bought with MORE tunables
+(`M0, τ, g_min, g_amp, P_on, β`) than the counting engine's `{k}`. Here "elegant math" means *one
+principle*, not *fewest constants*. And this is only the arbitration core — **entity/relation
+resolution, retrieval, multi-hop, and temporal onsets are orthogonal** (relation canonicalisation and
+event-time onsets are prototyped alongside; joint cross-edge inference is named and **deferred**, not
+built).
+
+**Identity sentence (the spine everything hangs off):**
+
+> SchemaMem models long-horizon memory as a **bank of per-relation competitions over a shared entity
+> graph — divisively normalised, driven by endogenous prediction error — that decides, with minimal
+> principle, when to consolidate, change, grow, or forget a belief.**
+
 ## What survives from the paper, unchanged
 
 The frontier keeps the paper's spine:
