@@ -64,6 +64,7 @@ class Action(str, Enum):
     RETRACT = "RETRACT"         # negative evidence reached k; belief goes absent (no successor)
     REVIVE = "REVIVE"           # a past belief reopens (savings)
     CONTESTED = "CONTESTED"     # slot oscillated too much; suspended (unresolved)
+    RESOLVE = "RESOLVE"         # a contested slot is settled by decisive evidence (raised bar)
     ASSERT_ABSENT = "ASSERT_ABSENT"  # negatives on a never-held object reached k (a firm "no")
     REDUNDANT = "REDUNDANT"     # a specific-context restatement of the default; not stored separately
     NOOP = "NOOP"               # weak signal below threshold; recorded, no state change
@@ -231,6 +232,21 @@ class EvolvingGraph:
             if ctx != DEFAULT and cur is None and obj == self.default_value(subject, relation):
                 return Action.REDUNDANT            # a specific context that just restates the default
             if key in self.contested:
+                # a contested slot can be RESOLVED, but only by decisive evidence: this value must
+                # clear a RAISED bar (k+1 fresh) and lead every rival ("you wavered — prove you settled").
+                k_res = self.k + 1
+                rivals = [len(o.fpos) for o in self._slot(subject, relation, ctx) if o is not e]
+                if len(e.fpos) >= k_res and len(e.fpos) > (max(rivals) if rivals else 0):
+                    self.contested.discard(key)
+                    self.flips[key] = 0
+                    for o in self._slot(subject, relation, ctx):
+                        if o is not e and o.is_current():
+                            o.close_interval(t)
+                    e.open_interval(t)
+                    self._reset_fresh(subject, relation, ctx, e)
+                    if ctx == DEFAULT:
+                        self._absorb_exceptions(subject, relation, t)
+                    return Action.RESOLVE
                 return Action.CONTESTED
             if cur is None:
                 e.open_interval(t)
@@ -245,6 +261,7 @@ class EvolvingGraph:
                     self.contested.add(key)
                     cur.close_interval(t)          # suspend both — no forced winner
                     e.close_interval(t)
+                    self._reset_fresh(subject, relation, ctx, None)  # cool off; resolution starts clean
                     return Action.CONTESTED
                 cur.close_interval(t)
                 e.open_interval(t)

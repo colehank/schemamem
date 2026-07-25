@@ -117,6 +117,31 @@ def test_oscillation_becomes_contested():
     assert g.believe("user", "city") == "UNRESOLVED"
 
 
+def test_contested_resolves_with_decisive_evidence():
+    """A contested slot is not a dead end: it can be settled by evidence clearing a raised bar
+    (k+1) with no rival pushing back."""
+    g = _g()
+    for ep, o in [("c1", "Beijing"), ("c2", "Shanghai"), ("c3", "Shanghai"),
+                  ("c4", "Beijing"), ("c5", "Beijing"), ("c6", "Shanghai"), ("c7", "Shanghai")]:
+        g.ingest("user", "city", o, episode_id=ep)
+    assert g.believe("user", "city") == "UNRESOLVED"
+    # user decisively settles in Shanghai — the raised bar is k+1 = 3 fresh episodes
+    assert g.ingest("user", "city", "Shanghai", episode_id="c8") is Action.CONTESTED   # 1
+    assert g.ingest("user", "city", "Shanghai", episode_id="c9") is Action.CONTESTED   # 2, still short
+    assert g.ingest("user", "city", "Shanghai", episode_id="c10") is Action.RESOLVE    # 3 -> settled
+    assert g.believe("user", "city") == "Shanghai"
+
+
+def test_asserted_absent_can_reopen():
+    """ABSENT is not terminal: a positive assertion reopens the belief (I do have kids now)."""
+    g = _g()
+    g.ingest("user", "haskids", "children", polarity="-", episode_id="e1")
+    g.ingest("user", "haskids", "children", polarity="-", episode_id="e2")
+    assert g.believe("user", "haskids") == "ABSENT"
+    assert g.ingest("user", "haskids", "children", episode_id="e3") is Action.SEED
+    assert g.believe("user", "haskids") == "children"
+
+
 def test_asserted_absent_is_k_gated():
     """One 'not X' about a never-held belief is tentative; two make a firm negative belief."""
     g = _g()
