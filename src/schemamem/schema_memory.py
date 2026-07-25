@@ -17,66 +17,32 @@ flat-retrieval fallback on entities that have no schema yet (the design's
 """
 from __future__ import annotations
 
-import json
-import re
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 try:                                    # package-relative when vendored
-    from .core import SchemaGraph, Observation, _differ_in_quantity
+    from .core import SchemaGraph
     from .config import RuntimeConfig
-    from .prompts import CLEAN_SYS, QUANT_SYS, EXTRACT_SYS, REWRITE_SYS, ANSWER_SYS, SLOT_MERGE_SYS
-except ImportError:                     # flat import in dev
-    from core import SchemaGraph, Observation, _differ_in_quantity
+    from ._util import _extract_json
+    from ._llm import LLMMixin
+    from ._l1 import L1Mixin
+    from ._l2 import L2Mixin
+    from ._retrieval import RetrievalMixin
+    from ._answer import AnswerMixin
+except ImportError:                     # flat import in dev / vendored
+    from core import SchemaGraph
     from config import RuntimeConfig
-    from prompts import CLEAN_SYS, QUANT_SYS, EXTRACT_SYS, REWRITE_SYS, ANSWER_SYS, SLOT_MERGE_SYS
+    from _util import _extract_json
+    from _llm import LLMMixin
+    from _l1 import L1Mixin
+    from _l2 import L2Mixin
+    from _retrieval import RetrievalMixin
+    from _answer import AnswerMixin
+
+__all__ = ["SchemaMemorySystem", "_extract_json"]
 
 
-def _extract_json(text: str, key: str = "assertions") -> dict:
-    """Parse a JSON object from an LLM reply, tolerating truncation.
-
-    On a clean parse, return it. If the reply was cut off mid-array (common when
-    max_tokens is hit), salvage every COMPLETE {...} object inside the first array
-    under `key` rather than silently dropping the whole reply."""
-    start = text.find("{")
-    if start == -1:
-        return {}
-    try:
-        return json.loads(text[start:text.rfind("}") + 1])
-    except json.JSONDecodeError:
-        pass
-    # recovery: pull complete top-level objects out of the (possibly truncated) list
-    objs, depth, buf, in_str, esc = [], 0, [], False, False
-    for ch in text[start + 1:]:
-        if in_str:
-            buf.append(ch)
-            if esc:
-                esc = False
-            elif ch == "\\":
-                esc = True
-            elif ch == '"':
-                in_str = False
-            continue
-        if ch == '"':
-            in_str = True
-            buf.append(ch)
-        elif ch == "{":
-            depth += 1
-            buf.append(ch)
-        elif ch == "}":
-            depth -= 1
-            buf.append(ch)
-            if depth == 0:
-                try:
-                    objs.append(json.loads("".join(buf)))
-                except json.JSONDecodeError:
-                    pass
-                buf = []
-        elif depth > 0:
-            buf.append(ch)
-    return {key: objs}
-
-
-class SchemaMemorySystem:
+class SchemaMemorySystem(LLMMixin, L1Mixin, L2Mixin, RetrievalMixin, AnswerMixin):
     def __init__(
         self,
         *,
@@ -195,367 +161,6 @@ class SchemaMemorySystem:
         # time, and the "verbatim" half of the dual store is actually verbatim.
         self._episodes: dict = {}
 
-    # ---- LLM helpers (each a single call; mockable) ------------------------
-    def _chat(self, system: str, user: str, max_tokens: int = 400, temperature: float = 0.0) -> str:
-        """One chat call, retried on transient gateway failures.
-
-        A shared gateway returns 5xx / rate-limit errors under load (a 503
-        'no available channel' burst killed several hour-long runs), and an
-        unhandled one propagates out of add_chunk and loses the whole run.
-        Back off and retry; only give up after the last attempt.
-        """
-        import time
-        for attempt in range(5):
-            try:
-                r = self._client.chat.completions.create(
-                    model=self.model,
-                    messages=[{"role": "system", "content": system},
-                              {"role": "user", "content": user}],
-                    temperature=temperature, max_tokens=max_tokens,
-                )
-                return r.choices[0].message.content or ""
-            except Exception as e:                       # noqa: BLE001 - gateway-agnostic
-                status = getattr(e, "status_code", None)
-                # A 4xx other than rate-limiting is the gateway's final answer —
-                # a content-filter rejection never succeeds on retry. Retrying it
-                # five times and then raising killed whole runs over one prompt.
-                # Degrade instead: this chunk contributes nothing, the run goes on.
-                if isinstance(status, int) and 400 <= status < 500 and status != 429:
-                    return ""
-                if attempt == 4:
-                    return ""
-                time.sleep(2 ** attempt)                 # 1, 2, 4, 8s
-        return ""
-
-    def _embed(self, text: str):
-        """Embed one string via the OpenAI-compatible embeddings endpoint, cached.
-        Returns None if the client has no embeddings support (e.g. a scripted mock),
-        so callers degrade to purely structural behaviour."""
-        text = (text or "").strip().lower()
-        if text in self._emb_cache:
-            return self._emb_cache[text]
-        try:
-            r = self._embed_client.embeddings.create(model=self.embedding_model, input=text)
-            vec = r.data[0].embedding
-        except Exception:
-            vec = None
-        self._emb_cache[text] = vec
-        return vec
-
-    def _embed_many(self, texts: list) -> list:
-        """Embed many strings in as few requests as possible, cached.
-
-        The embeddings endpoint takes a LIST input, so ranking N slots costs one
-        request instead of N. Ranking every slot one-at-a-time dominated query
-        latency (a few hundred slots => a few hundred sequential round trips).
-        Falls back to per-item `_embed` when a gateway rejects batch input, so
-        behaviour is unchanged wherever batching is unavailable.
-        """
-        norm = [(t or "").strip().lower() for t in texts]
-        missing = [t for t in dict.fromkeys(norm) if t not in self._emb_cache]
-        for i in range(0, len(missing), self._embed_batch):
-            batch = missing[i:i + self._embed_batch]
-            try:
-                r = self._embed_client.embeddings.create(model=self.embedding_model, input=batch)
-                vecs = [d.embedding for d in sorted(r.data, key=lambda d: d.index)]
-            except Exception:
-                vecs = []
-            if len(vecs) == len(batch):
-                for t, v in zip(batch, vecs):
-                    self._emb_cache[t] = v
-            else:                            # batch unsupported/partial -> one at a time
-                for t in batch:
-                    self._embed(t)
-        return [self._emb_cache.get(t) for t in norm]
-
-    def _similarity(self, a: str, b: str) -> float:
-        """Cosine similarity in [0,1] between two short strings. 0.0 when embeddings
-        are unavailable (guards then no-op, preserving pure structural behaviour)."""
-        if a == b:
-            return 1.0
-        va, vb = self._embed(a), self._embed(b)
-        if va is None or vb is None:
-            return 0.0
-        dot = sum(x * y for x, y in zip(va, vb))
-        na = sum(x * x for x in va) ** 0.5
-        nb = sum(y * y for y in vb) ** 0.5
-        if na == 0 or nb == 0:
-            return 0.0
-        return max(0.0, dot / (na * nb))
-
-    def _judge_slot(self, new_name: str, new_value, existing: list):
-        """LLM same-attribute judge for slot canonicalization. `existing` is a list of
-        (slot_name, belief). Returns an existing slot name to merge into, or None to
-        keep the new slot. One LLM call; conservative (prefers None on doubt)."""
-        if not existing:
-            return None
-        exist_block = "\n".join(f"- {n}: {b}" for n, b in existing)
-        user = (f"ENTITY's EXISTING slots (name: current belief):\n{exist_block}\n\n"
-                f"NEW slot -> name: {new_name}, value: {new_value}\n\n"
-                f"Is the NEW slot the SAME ATTRIBUTE as one of the existing slots? JSON:")
-        parsed = _extract_json(self._chat(SLOT_MERGE_SYS, user, max_tokens=40), key="_")
-        chosen = parsed.get("merge_into")
-        # accept only an exact existing-slot name
-        return chosen if chosen in {n for n, _ in existing} else None
-
-    def _rewrite_belief(self, old_belief, candidate) -> str:
-        obs_lines = "\n".join(f"- {o.value} ({o.t})" for o in candidate.observations)
-        user = f"OLD belief: {old_belief}\nNew corroborating observations:\n{obs_lines}\n\nNEW belief value:"
-        out = self._chat(REWRITE_SYS, user, max_tokens=32).strip()
-        # guard against empty / overlong: fall back to latest observed value
-        return out if 0 < len(out) <= 60 else candidate.observations[-1].value
-
-    # ---- schema-state view for the extraction prompt -----------------------
-    def _schema_state(self, relevant_to: Optional[str] = None) -> dict:
-        # Nested {entity: {slot: {belief, candidates}}} so the model never sees a
-        # flat "entity.slot" key it might copy back into the entity field.
-        #
-        # L2 needs current beliefs to score pred_error, but only for entities the
-        # batch actually mentions. Dumping the whole graph does not scale: by ~800
-        # entities the state JSON dwarfs the facts it is meant to contextualise, and
-        # measured extraction coverage fell from 93% to 66% as the graph grew.
-        # `relevant_to` (the batch's fact text) restricts it, so the prompt stays
-        # the same size however large the memory becomes.
-        hay = (relevant_to or "").lower()
-        state = {}
-        for schema in self._graph.entities.values():
-            if relevant_to is not None:
-                e = schema.entity.lower()
-                if len(e) < 3 or e not in hay:
-                    continue
-            slots = {}
-            for slot in schema.slots.values():
-                slots[slot.name] = {
-                    "belief": slot.belief,
-                    "candidates": list(slot.candidates.keys()),
-                }
-            state[schema.entity] = slots
-        return state
-
-    @staticmethod
-    def _clean_entity(raw, known=None):
-        """Normalize an entity name: a bare person/thing, never a compound
-        'Entity.slot' string (a failure mode when schema-state is fed back)."""
-        e = (raw or "user").strip()
-        # 'Caroline.adoption_goal' -> 'Caroline', but a dot is also part of many real
-        # names ("L. Ron Hubbard", "Apple Inc.", "Martin Luther King Jr."). Only split
-        # when it looks like the entity.slot compound this guards against: no space
-        # around the dot and a slot-shaped suffix (lowercase word / snake_case).
-        m = re.match(r"^([^.\s][^.]*?)\.([a-z][a-z0-9_]*)$", e)
-        if m:
-            e = m.group(1).strip()
-        if known:                          # snap to a known speaker if one matches
-            for k in known:
-                if k.lower() == e.lower():
-                    return k
-        return e or "user"
-
-    # ---- L1: raw episode -> self-contained, subject-bound facts ------------
-    # A chunk that is already a list of self-contained declarative facts (numbered,
-    # bulleted, or one-per-line) needs no L1 rewrite: L1's job is to PRODUCE such
-    # facts, so running an LLM over them can only lose some. On FactConsolidation a
-    # 4096-token chunk holds ~277 numbered facts, far past what a single capped
-    # completion can re-emit, so the rewrite silently dropped most of every chunk.
-    _LIST_ITEM = re.compile(r"^\s*(?:\d+[.)]|[-*•])\s+(.+?)\s*$")
-
-    @classmethod
-    def _as_fact_list(cls, text: str) -> Optional[list]:
-        """Return the list items if `text` is predominantly a declarative list,
-        else None. Conservative: needs several items and near-total coverage, so
-        a dialogue that happens to contain a bulleted aside is not misread."""
-        lines = [ln for ln in (text or "").split("\n") if ln.strip()]
-        if len(lines) < 5:
-            return None
-        items = [m.group(1) for m in (cls._LIST_ITEM.match(ln) for ln in lines) if m]
-        if len(items) < 5 or len(items) < 0.8 * len(lines):
-            return None
-        return [i for i in items if len(i) > 3]
-
-    def _clean_to_facts(self, text: str, known: list) -> list:
-        """L1 stage: rewrite a raw dialogue chunk into subject-bound self-contained
-        facts. Returns [{"subject": <entity>, "text": <fact>}, ...]."""
-        listed = self._as_fact_list(text)
-        if listed is not None:
-            # already self-contained facts — pass through verbatim, lossless.
-            return [{"subject": "", "text": s} for s in listed]
-
-        hint = f"PARTICIPANTS (use these exact names as subjects): {known}\n" if known else ""
-        facts, seen = [], set()
-
-        def call_pass(spec):
-            sys_prompt, mt, segment = spec
-            u = f"{hint}RAW DIALOGUE (one episode):\n{segment}\n\nJSON:"
-            return _extract_json(self._chat(sys_prompt, u, max_tokens=mt), key="facts")
-
-        def collect(parsed):
-            for f in parsed.get("facts", []):
-                ftext = (f.get("text") or "").strip()
-                if not ftext:
-                    continue
-                key = ftext.lower()
-                if key in seen:
-                    continue
-                seen.add(key)
-                facts.append({"subject": self._clean_entity(f.get("subject"), known=known),
-                              "text": ftext})
-
-        # Two orthogonal L1 passes over the episode:
-        #   (a) CLEAN topical/trait pass — run ONCE on the whole episode, because
-        #       consolidating "the same attribute" needs a view of the whole chunk.
-        #   (b) QUANT quantifiable-state pass — run over sliding WINDOWS of the episode.
-        #       A scalar value (a count/amount) buried in the middle of a long chunk is
-        #       under-recalled by a single pass whose attention is captured by topical
-        #       detail; shortening the context each pass sees restores recall. Recall of
-        #       a durable value is monotone under the union of windows (a value seen in
-        #       ANY window is kept), and dedup keeps the fact set clean.
-        # The passes are independent, so they go out CONCURRENTLY and are collected
-        # in a FIXED order — results stay deterministic (dedup is order-sensitive)
-        # while latency drops to the slowest single call instead of their sum. This
-        # is the dominant cost of ingestion: MemBench rebuilds memory once per
-        # trajectory, so serial passes put the full benchmark out of reach.
-        specs = [(CLEAN_SYS, 1200, text)]
-        for seg in self._l1_windows(text):
-            for _ in range(self.l1_quant_samples):
-                specs.append((QUANT_SYS, 500, seg))
-        if len(specs) == 1:
-            collect(call_pass(specs[0]))
-        else:
-            from concurrent.futures import ThreadPoolExecutor
-            with ThreadPoolExecutor(max_workers=min(8, len(specs))) as ex:
-                for parsed in list(ex.map(call_pass, specs)):
-                    collect(parsed)
-        return facts
-
-    def _l1_windows(self, text: str) -> list:
-        """Split an episode into overlapping windows by turn boundaries so each QUANT
-        pass sees a short context. Returns [text] unchanged when windowing is disabled
-        (l1_window_chars <= 0) or the episode already fits in one window."""
-        w = self.l1_window_chars
-        if w <= 0 or len(text) <= w:
-            return [text]
-        lines = text.split("\n")
-        windows, cur, cur_len = [], [], 0
-        for ln in lines:
-            if cur and cur_len + len(ln) > w:
-                windows.append("\n".join(cur))
-                # 1-turn overlap so a value split across the boundary is not lost
-                cur = cur[-1:]
-                cur_len = sum(len(x) for x in cur)
-            cur.append(ln)
-            cur_len += len(ln)
-        if cur:
-            windows.append("\n".join(cur))
-        return windows
-
-    @staticmethod
-    def _coerce_str(v):
-        """Flatten a value the LLM may have returned as a nested object into a
-        plain string (e.g. {'belief': 'x'} -> 'x')."""
-        if isinstance(v, dict):
-            for k in ("belief", "value", "text", "name"):
-                if isinstance(v.get(k), str):
-                    return v[k].strip()
-            strs = [str(x) for x in v.values() if isinstance(x, (str, int, float))]
-            return strs[0].strip() if strs else ""
-        if isinstance(v, list):
-            return ", ".join(SchemaMemorySystem._coerce_str(x) for x in v)
-        return str(v).strip()
-
-    # ---- L2: cleaned facts -> slot observations -> L3 ingest ---------------
-    def _ingest_facts(self, facts: list, episode_id: str, t: str, known: list) -> None:
-        """L2 + L3 for one episode's already-cleaned facts. Stateful (reads the
-        current schema for slot/candidate reuse and mutates it), so this runs
-        sequentially even when L1 is parallelized."""
-        if not facts:
-            return
-        # One assertion costs ~40 output tokens, so a single capped completion can
-        # only carry ~25 of them. A dense chunk (a FactConsolidation page holds
-        # ~277 facts) silently lost everything past the cap. Split into batches
-        # small enough that the reply fits, and ingest them in order so the
-        # cross-episode vote and the schema state stay correct.
-        if len(facts) > self._l2_batch:
-            for i in range(0, len(facts), self._l2_batch):
-                self._ingest_facts(facts[i:i + self._l2_batch], episode_id, t, known)
-            return
-        # A fact with no subject is one L1 passed through verbatim (a declarative
-        # list item). Do NOT invent one: the bracket tells L2 to use that exact
-        # entity, and an empty subject normalises to "user", which would attribute
-        # every world fact to the speaker. Leave it unprefixed so L2 reads the
-        # subject off the sentence, per the narrative-input rule.
-        facts_block = "\n".join(
-            (f"- [{f['subject']}] {f['text']}" if f.get("subject") else f"- {f['text']}")
-            for f in facts)
-        state_json = json.dumps(self._schema_state(relevant_to=facts_block),
-                                ensure_ascii=False)
-        hint = f"KNOWN ENTITIES (reuse these exact names): {known}\n" if known else ""
-        user = (f"{hint}CURRENT SCHEMA (nested entity -> slot -> belief + open candidate keys):\n"
-                f"{state_json}\n\nFACTS (each prefixed with its subject entity in brackets — use "
-                f"that exact entity):\n{facts_block}\n\nJSON:")
-        # L2 is a network call; a transient empty/failed parse would silently drop
-        # this episode's contribution. Retry a couple of times before giving up.
-        parsed = {"assertions": []}
-        for _ in range(3):
-            try:
-                parsed = _extract_json(self._chat(EXTRACT_SYS, user, max_tokens=1200), key="assertions")
-            except Exception:
-                parsed = {"assertions": []}
-            if parsed.get("assertions"):
-                break
-
-        # COVERAGE ENFORCEMENT. Asking the model not to drop items is not reliable:
-        # with the coverage rule in place it still returned ~7 assertions for 25
-        # listed facts, so only 671 of 2,310 FactConsolidation entities reached the
-        # graph. A fact that yields no assertion is an entity the system can never
-        # answer about, and nothing downstream can recover it. When the yield is
-        # far below the input count, halve the batch and retry — a shorter list is
-        # harder to summarise away — until batches of one, where dropping is
-        # unambiguous rather than a judgement call.
-        got = len(parsed.get("assertions", []))
-        if len(facts) > 1 and got < 0.6 * len(facts):
-            mid = len(facts) // 2
-            self._ingest_facts(facts[:mid], episode_id, t, known)
-            self._ingest_facts(facts[mid:], episode_id, t, known)
-            return
-
-        for a in parsed.get("assertions", []):
-            slot = a.get("slot")
-            value = self._coerce_str(a.get("value"))
-            if not slot or value in ("", "null", "none", "None"):   # skip empty assertions
-                continue
-            entity = self._clean_entity(a.get("entity"), known=known)
-            # Provenance: use the fact index the extractor tied this assertion to; fall back to
-            # the first fact whose subject matches the entity, then to the first fact.
-            idx = a.get("source_fact_index")
-            src = None
-            if isinstance(idx, int) and 0 <= idx < len(facts):
-                src = facts[idx]["text"]
-            if src is None:
-                src = next((f["text"] for f in facts if f["subject"] == entity), facts[0]["text"])
-            pe = float(a.get("pred_error", 0.0))
-            cand = a.get("candidate_id")
-            # Numeric override: on a slot that already holds a belief, a value carrying
-            # a DIFFERENT quantity (count/amount/page/frequency) is a genuine update, not
-            # a "partial" nuance — the LLM tends to mislabel a monotone change ("200→220
-            # pages") as r=0.5. Force it to a conflict so it can supersede. This is the
-            # same signal the paraphrase guard uses (quantity differs => not a paraphrase),
-            # applied at scoring time.
-            existing = self._graph.entities.get(entity)
-            belief = None
-            if existing is not None:
-                s_obj = existing.slots.get(str(slot))
-                belief = s_obj.belief if s_obj else None
-            if belief is not None and _differ_in_quantity(value, str(belief)):
-                pe = 1.0
-                if not cand:
-                    cand = value  # concrete positive value as the candidate key
-            obs = Observation(
-                entity=entity, slot=str(slot), value=value,
-                pred_error=pe, episode_id=episode_id, t=t,
-                candidate_id=cand, source_fact=src,
-            )
-            self._graph.ingest(obs)
-
-    # ---- WRITE: L1 clean -> L2 extract -> L3 ingest ------------------------
     def add_chunk(self, text: str, timestamp: Optional[str] = None,
                   speakers: Optional[list] = None) -> None:
         """Ingest one context chunk as ONE episode: L1 clean -> L2 extract -> L3.
@@ -564,7 +169,6 @@ class SchemaMemorySystem:
         self._pending_speakers = speakers or getattr(self, "_pending_speakers", None)
         if sum(len(x) for x, _ in self._pending) >= self.min_episode_chars:
             self._flush_pending()
-
     def _flush_pending(self) -> None:
         """Turn everything buffered so far into ONE episode and ingest it."""
         if not self._pending:
@@ -581,8 +185,6 @@ class SchemaMemorySystem:
         known = self._pending_speakers or list(self._graph.entities.keys())
         facts = self._clean_to_facts(text, known)
         self._ingest_facts(facts, episode_id, t, known)
-
-    # ---- WRITE (batch): parallel L1, then sequential L2/L3 -----------------
     def add_chunks(self, chunks: list, speakers: Optional[list] = None,
                    max_workers: int = 8) -> None:
         """Ingest many chunks as an ordered episode stream.
@@ -594,7 +196,6 @@ class SchemaMemorySystem:
 
         `chunks`: list of str, or list of (text, timestamp) tuples.
         """
-        from concurrent.futures import ThreadPoolExecutor
 
         norm = [(c if isinstance(c, (tuple, list)) else (c, None)) for c in chunks]
         base_known = speakers or list(self._graph.entities.keys())
@@ -621,12 +222,10 @@ class SchemaMemorySystem:
             episode_id = f"ep{self._episode_counter}"
             self._episodes[episode_id] = (ts or episode_id, text)
             self._ingest_facts(facts, episode_id, ts or episode_id, base_known)
-
     def finalize(self):
         """Flush stalled candidates to protected exceptions (stream-end sweep)."""
         self._flush_pending()          # a partial episode still counts
         return self._graph.finalize()
-
     def dump_memory(self, traj_id: Optional[str] = None) -> dict:
         """Serialise the memory state for the cross-method structure comparison.
 
@@ -660,252 +259,3 @@ class SchemaMemorySystem:
         if traj_id is not None:
             out["traj_id"] = traj_id
         return out
-
-    # ---- READ: render schema into context ----------------------------------
-    def _render_entity(self, schema) -> str:
-        lines = [f"Entity: {schema.entity}"]
-        for slot in schema.slots.values():
-            if slot.belief is not None:
-                lines.append(f"  {slot.name}: {slot.belief} (current)")
-            for old, when in slot.superseded:
-                lines.append(f"  {slot.name}: {old} (was, superseded {when})")
-            for o in slot.exceptions:
-                lines.append(f"  {slot.name}: {o.value} (exception, {o.t})")
-        return "\n".join(lines)
-
-    def _render_slot_dual(self, entity: str, slot) -> str:
-        """Dual-trace rendering of one slot: gist (belief + evolution) over
-        verbatim (time-anchored source facts). This is what the retriever hands
-        the answerer — the gist gives the current value, the verbatim ledger
-        gives the specific wording / time / count that a precise question needs."""
-        out = [f"[{entity}] {slot.name}:"]
-        if slot.belief is not None:
-            out.append(f"  current: {slot.belief}" + (f"  (as of {slot.belief_t})" if slot.belief_t else ""))
-        for old, when in slot.superseded:
-            out.append(f"  previously: {old}  (superseded {when})")
-        for o in slot.exceptions:
-            out.append(f"  exception: {o.value}  ({o.t})")
-        # verbatim layer: the original time-anchored facts behind this slot
-        if slot.ledger:
-            out.append("  evidence:")
-            for o in slot.ledger:
-                src = (o.source_fact or o.value or "").strip()
-                if src:
-                    out.append(f"    - ({o.t}) {src}")
-        return "\n".join(out)
-
-    # A query is not always a question. Benchmarks that model realistic input (and
-    # real users) bury the real request under conversational filler: MemBench-noisy
-    # prefixes several sentences of chatter, INCLUDING decoy questions, before "what
-    # I truly wanted to clarify is, <question>". Keying retrieval on the whole string
-    # lets the filler drive both the embedding and the entity grounding, so the
-    # ranked slots answer the chatter rather than the request.
-    _ASK_CUE = re.compile(
-        r"(?:wanted to (?:clarify|ask|know)|my question|really asking|actually)"
-        r"(?:\s+is)?\s*[,:.]?\s*",
-        re.I)
-
-    @classmethod
-    def _retrieval_key(cls, query: str) -> str:
-        """The part of `query` retrieval should actually match on."""
-        q = (query or "").strip()
-        if len(q) < 200:
-            return q
-        m = list(cls._ASK_CUE.finditer(q))
-        if m:                                   # explicit "what I really meant is ..."
-            tail = q[m[-1].end():].strip()
-            if len(tail) > 15:
-                return tail
-        # otherwise the LAST question plus whatever follows it (answer options)
-        parts = [i for i, ch in enumerate(q) if ch == "?"]
-        if len(parts) >= 2:
-            start = q.rfind("?", 0, parts[-1]) + 1
-            tail = q[start:].strip()
-            if len(tail) > 15:
-                return tail
-        return q
-
-    def retrieve_with_source_groups(self, query: str, k: Optional[int] = None):
-        """Return (context_text, source_id_groups).
-
-        Query-ranked dual-trace retrieval: score every slot by embedding
-        similarity between the query and the slot's descriptor (name + belief +
-        recent evidence), take the top-k, and render each in dual-trace form
-        (gist over verbatim). Falls back to rendering all slots when embeddings
-        are unavailable. source_id_groups groups the source facts backing each
-        rendered slot (rank order), for recall@k metrics.
-        """
-        self.finalize()
-        k = k or self.retrieve_k
-        query = self._retrieval_key(query)
-        # collect (entity, slot) pairs
-        pairs = [(sch.entity, slot) for sch in self._graph.entities.values()
-                 for slot in sch.slots.values()]
-        if not pairs:
-            return "", []
-
-        def descriptor(entity, slot):
-            parts = [slot.name.replace("_", " "), slot.belief or ""]
-            parts += [o.value for o in slot.ledger[-3:]]
-            return f"{entity} " + " ".join(str(p) for p in parts if p)
-
-        # ENTITY GROUNDING. The graph is entity-centric, so a query that NAMES an
-        # entity should read that entity's slots — not whatever embeds nearest.
-        # Cosine over topical descriptors reliably loses this: asked which sport
-        # the goaltender plays, it returned ten other sport slots and never the
-        # goaltender's, because they are all "about sport". Resolve the mention
-        # first, rank second; this is what having an entity index is for.
-        # Match on TOKENS, not on the whole string: the extracted name and the
-        # question rarely agree character-for-character ("The 2004 NBA Draft" vs
-        # "2004 NBA Draft", "Apple Inc." vs "Apple Inc"). Requiring every
-        # significant token of the entity to appear keeps that precise — a
-        # two-token name must have both tokens present — while surviving
-        # articles, punctuation and suffixes.
-        _STOP = {"the", "a", "an", "of", "in", "at", "on", "for", "and", "is", "was"}
-        q_tokens = set(re.findall(r"[a-z0-9]+", (query or "").lower()))
-
-        def _mentioned(entity: str) -> bool:
-            toks = [t for t in re.findall(r"[a-z0-9]+", (entity or "").lower())
-                    if t not in _STOP]
-            if not toks or sum(len(t) for t in toks) < 3:
-                return False
-            return all(t in q_tokens for t in toks)
-
-        ranked = pairs
-        try:
-            # one batched request for the query + every slot descriptor, instead of
-            # one round trip per slot (which dominated query latency).
-            vecs = self._embed_many([query] + [descriptor(e, s) for e, s in pairs])
-            qv, slot_vecs = vecs[0], vecs[1:]
-            if qv is None:
-                raise ValueError("no query embedding")
-            import math
-            def cos(a, b):
-                if a is None or b is None:
-                    return 0.0
-                dot = sum(x * y for x, y in zip(a, b))
-                na = math.sqrt(sum(x * x for x in a))
-                nb = math.sqrt(sum(y * y for y in b))
-                return dot / (na * nb) if na and nb else 0.0
-            # +1.0 for a named entity puts every mentioned entity's slots above
-            # every unmentioned one, while cosine still orders within each band.
-            scored = [(p, cos(qv, sv) + (1.0 if _mentioned(p[0]) else 0.0))
-                      for p, sv in zip(pairs, slot_vecs)]
-            scored.sort(key=lambda z: z[1], reverse=True)
-            ranked = [p for p, _ in scored[:k]]
-        except Exception:
-            # no embeddings: entity grounding alone still beats arbitrary order
-            named = [p for p in pairs if _mentioned(p[0])]
-            ranked = (named + [p for p in pairs if p not in named])[:k]
-
-        blocks, groups = [], []
-        for entity, slot in ranked:
-            blocks.append(self._render_slot_dual(entity, slot))
-            srcs = [o.source_fact for o in slot.ledger if o.source_fact]
-            if srcs:
-                groups.append(srcs)
-        gist = "\n".join(blocks)
-
-        # VERBATIM LAYER — the schema names WHICH episodes matter; the episodes
-        # themselves supply the wording. Without this the answerer only ever sees
-        # an LLM rewrite of the source, so any detail L1 dropped is unrecoverable.
-        # Episodes are emitted in slot-rank order (best-matching slot first) and
-        # capped by verbatim_budget characters.
-        if self.verbatim_budget > 0 and self._episodes:
-            seen, chosen = set(), []
-            for _, slot in ranked:
-                for o in slot.ledger:
-                    ep = o.episode_id
-                    if ep in seen or ep not in self._episodes:
-                        continue
-                    seen.add(ep)
-                    chosen.append(ep)
-            spent, verbatim = 0, []
-            for ep in chosen:
-                t, text = self._episodes[ep]
-                text = (text or "").strip()
-                if not text:
-                    continue
-                if spent + len(text) > self.verbatim_budget:
-                    room = self.verbatim_budget - spent
-                    if room < 200:            # not worth a fragment
-                        break
-                    text = text[:room] + " …"
-                verbatim.append(f"--- episode {ep} ({t}) ---\n{text}")
-                spent += len(text)
-                if spent >= self.verbatim_budget:
-                    break
-            if verbatim:
-                gist = (gist + "\n\nSOURCE EPISODES (verbatim, most relevant first):\n"
-                        + "\n".join(verbatim))
-        return gist, groups
-
-    # ---- TIMELINE VIEW -----------------------------------------------------
-    _TEMPORAL_HINTS = ("when", "before", "after", "first", "last", "earlier",
-                       "later", "how long", "since", "until", "order", "date",
-                       "recent", "ago", "which came", "prior to", "following")
-
-    @staticmethod
-    def _parse_t(t: str):
-        """Best-effort parse of a timestamp string to a sortable key. Returns a
-        datetime, or None when unparseable. Handles the LoCoMo/LongMemEval forms
-        seen in the data (e.g. '2023/10/10 (Tue) 23:08', '2023-06-12')."""
-        import re as _re
-        import datetime as _dt
-        if not t:
-            return None
-        m = _re.search(r"(\d{4})[/-](\d{1,2})[/-](\d{1,2})", str(t))
-        if not m:
-            return None
-        y, mo, d = (int(g) for g in m.groups())
-        hm = _re.search(r"(\d{1,2}):(\d{2})", str(t))
-        hh, mm = (int(hm.group(1)), int(hm.group(2))) if hm else (0, 0)
-        try:
-            return _dt.datetime(y, mo, d, hh, mm)
-        except ValueError:
-            return None
-
-    def timeline_view(self, k: Optional[int] = None) -> str:
-        """A SECOND view over the same observation history, organized by TIME
-        rather than by attribute. The per-slot belief view answers 'what is the
-        current value of X'; this view answers 'in what order did events happen'.
-        Every observation already carries a timestamp; we flatten observations
-        across all slots into one chronologically-sorted event line. This is a
-        derived view (no new storage, no new edges), not a separate memory.
-        Temporal reasoning is the one axis the attribute-organized schema
-        compresses away, and this view restores it on demand."""
-        self.finalize()
-        events = []
-        for sch in self._graph.entities.values():
-            for slot in sch.slots.values():
-                for o in slot.ledger:
-                    key = self._parse_t(o.t)
-                    label = (o.source_fact or f"{sch.entity} {slot.name.replace('_',' ')}: {o.value}").strip()
-                    events.append((key, o.t, label))
-        # keep only time-anchored events; sort chronologically (unparseable last)
-        dated = [e for e in events if e[0] is not None]
-        dated.sort(key=lambda e: e[0])
-        if k:
-            dated = dated[:k]
-        lines = [f"  ({t}) {label}" for _, t, label in dated]
-        return "Timeline (events in chronological order):\n" + "\n".join(lines) if lines else ""
-
-    def _is_temporal(self, query: str) -> bool:
-        q = query.lower()
-        return any(h in q for h in self._TEMPORAL_HINTS)
-
-    # ---- ANSWER ------------------------------------------------------------
-    def ask_with_retrieved_context(self, query: str, context: str,
-                                   include_timeline: bool = False) -> str:
-        # timeline_view() is a valid second (time-organized) view, but a full
-        # chronological dump dilutes the context and hurt accuracy in an A/B on
-        # temporal instances (the failing cases were upstream extraction misses,
-        # not missing time order). It is therefore OFF by default and opt-in;
-        # a query-relevant timeline (filter events to the queried entity/slot
-        # before ordering) is the right form and is left as future work.
-        if include_timeline and self._is_temporal(query):
-            tl = self.timeline_view()
-            if tl:
-                context = f"{context}\n\n{tl}"
-        user = f"Memory context:\n{context}\n\nQuestion: {query}\nAnswer:"
-        return self._chat(ANSWER_SYS, user, max_tokens=256).strip()

@@ -122,7 +122,14 @@ src/schemamem/
                     #   env + from_mapping loaders; /v1 normalisation). Pure stdlib.
   prompts.yaml      # the L1/L2 prompts as readable block scalars + the rationale for each earned rule
   prompts.py        # thin LOADER of prompts.yaml -> the same SLOT_MERGE_SYS/CLEAN_SYS/... names (edit the YAML)
-  schema_memory.py  # SchemaMemorySystem — LLM ingestion + query rendering; the public API + eval contract
+  schema_memory.py  # SchemaMemorySystem — the composed class: __init__ + write API (add_chunk/add_chunks);
+                    #   the pipeline stages are mixins so the public API + eval contract are unchanged:
+  _llm.py           #   LLMMixin        — chat + embedding helpers (mockable)
+  _l1.py            #   L1Mixin         — raw episode -> self-contained facts
+  _l2.py            #   L2Mixin         — facts -> slot observations -> L3 ingest (+ schema-state view)
+  _retrieval.py     #   RetrievalMixin  — render schema into retrieval context + timeline
+  _answer.py        #   AnswerMixin     — answer over rendered context
+  _util.py          #   _extract_json (shared JSON-recovery helper)
   __init__.py       # public exports (incl. RuntimeConfig)
 tests/              # test_core.py (slot routing) + test_graph_core.py (graph dynamics + hops),
                     #   both no-LLM; test_system.py (adapter contract, mock LLM);
