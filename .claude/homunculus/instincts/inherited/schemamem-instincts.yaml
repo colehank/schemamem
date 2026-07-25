@@ -1,0 +1,606 @@
+# Instincts generated from https://github.com/colehank/schemamem
+# Generated: 2026-07-25T01:58:40.073Z
+# Version: 2.0
+# NOTE: This file supplements (does not replace) any existing curated instincts.
+# High-confidence manually curated instincts should be preserved alongside these.
+
+---
+id: schemamem-commit-conventional
+trigger: "when writing a commit message"
+confidence: 0.85
+domain: git
+source: repo-analysis
+source_repo: https://github.com/colehank/schemamem
+---
+
+# Schemamem Commit Conventional
+
+## Action
+
+Use conventional commit format with prefixes: fix, feat, eval, docs, perf
+
+## Evidence
+
+- 32 commits analyzed
+- Detected conventional commit pattern
+- Examples: eval: correct the plan's broken interface and record wiring reality, perf: batch query-time slot embeddings into one request
+
+---
+id: schemamem-commit-length
+trigger: "when writing a commit message"
+confidence: 0.6
+domain: git
+source: repo-analysis
+source_repo: https://github.com/colehank/schemamem
+---
+
+# Schemamem Commit Length
+
+## Action
+
+Write moderate-length commit messages (~66 characters)
+
+## Evidence
+
+- Average commit message length: 66 chars
+- Based on 32 commits
+
+---
+id: schemamem-naming-files
+trigger: "when creating a new file"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/colehank/schemamem
+---
+
+# Schemamem Naming Files
+
+## Action
+
+Use snake_case naming convention
+
+## Evidence
+
+- Analyzed file naming patterns in repository
+- Dominant pattern: snake_case
+
+---
+id: schemamem-import-relative
+trigger: "when importing modules"
+confidence: 0.75
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/colehank/schemamem
+---
+
+# Schemamem Import Relative
+
+## Action
+
+Use relative imports for project files
+
+## Evidence
+
+- Import analysis shows relative import pattern
+- Example: import { x } from '../lib/x'
+
+---
+id: schemamem-export-style
+trigger: "when exporting from a module"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/colehank/schemamem
+---
+
+# Schemamem Export Style
+
+## Action
+
+Prefer named exports
+
+## Evidence
+
+- Export pattern analysis
+- Dominant style: named
+
+---
+id: schemamem-test-separate
+trigger: "when writing tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/colehank/schemamem
+---
+
+# Schemamem Test Separate
+
+## Action
+
+Place tests in the tests/ or __tests__/ directory, mirroring src structure
+
+## Evidence
+
+- Separate test directory pattern detected
+- Tests live in dedicated test folders
+
+---
+id: schemamem-test-naming
+trigger: "when creating a test file"
+confidence: 0.85
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/colehank/schemamem
+---
+
+# Schemamem Test Naming
+
+## Action
+
+Name test files using the pattern: *.test.ts
+
+## Evidence
+
+- File pattern: *.test.ts
+- Consistent across test files
+
+---
+id: schemamem-workflow-feature-development
+trigger: "when implementing a new feature"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/colehank/schemamem
+---
+
+# Schemamem Workflow Feature Development
+
+## Action
+
+Follow the feature-development workflow:
+1. Add feature implementation
+2. Add tests for feature
+3. Update documentation
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~10x per month
+- Files: **/*.test.*
+
+---
+id: schemamem-workflow-core-logic-iteration-with-tests
+trigger: "when doing core logic iteration with tests"
+confidence: 0.8
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/colehank/schemamem
+---
+
+# Schemamem Workflow Core Logic Iteration With Tests
+
+## Action
+
+Follow the core-logic-iteration-with-tests workflow:
+1. Edit or create core logic file (e.g., src/schemamem/schema_memory.py, src/schemamem/graph_core.py, src/schemamem/coupled_core.py)
+2. Update or add corresponding test file (e.g., tests/test_system.py, tests/test_graph_core.py, tests/test_coupled_core.py)
+3. Optionally update documentation to reflect new logic
+4. Run and verify all tests pass
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~6x per month
+- Files: src/schemamem/schema_memory.py, src/schemamem/graph_core.py, src/schemamem/coupled_core.py
+
+---
+id: schemamem-workflow-prompt-rule-update-for-extraction-or-answering
+trigger: "when doing prompt rule update for extraction or answering"
+confidence: 0.75
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/colehank/schemamem
+---
+
+# Schemamem Workflow Prompt Rule Update For Extraction Or Answering
+
+## Action
+
+Follow the prompt-rule-update-for-extraction-or-answering workflow:
+1. Edit src/schemamem/prompts.py to update or add new prompt rules
+2. Describe the reasoning and expected effect in the commit message
+3. Optionally run or update tests to validate the fix
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~5x per month
+- Files: src/schemamem/prompts.py
+
+---
+id: schemamem-workflow-evaluation-plan-and-paper-alignment
+trigger: "when doing evaluation plan and paper alignment"
+confidence: 0.75
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/colehank/schemamem
+---
+
+# Schemamem Workflow Evaluation Plan And Paper Alignment
+
+## Action
+
+Follow the evaluation-plan-and-paper-alignment workflow:
+1. Edit docs/eval/evolution_comparison_plan.md and/or docs/design/full_paper_zh.md
+2. Optionally update CLAUDE.md or other documentation files
+3. Describe rationale and changes in the commit message
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~5x per month
+- Files: docs/eval/evolution_comparison_plan.md, docs/design/full_paper_zh.md, CLAUDE.md
+
+---
+id: schemamem-workflow-performance-optimization-in-core-logic
+trigger: "when doing performance optimization in core logic"
+confidence: 0.65
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/colehank/schemamem
+---
+
+# Schemamem Workflow Performance Optimization In Core Logic
+
+## Action
+
+Follow the performance-optimization-in-core-logic workflow:
+1. Edit src/schemamem/schema_memory.py to add batching, concurrency, or buffer logic
+2. Describe performance measurements and improvements in the commit message
+3. Optionally update configuration or test files
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~3x per month
+- Files: src/schemamem/schema_memory.py
+
+---
+id: schemamem-workflow-documentation-frontier-or-direction-update
+trigger: "when doing documentation frontier or direction update"
+confidence: 0.65
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/colehank/schemamem
+---
+
+# Schemamem Workflow Documentation Frontier Or Direction Update
+
+## Action
+
+Follow the documentation-frontier-or-direction-update workflow:
+1. Edit CLAUDE.md and/or docs/design/evolving_graph.md to reflect the new model or direction
+2. Optionally update or add prototype or reference files
+3. Describe the new direction and rationale in the commit message
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~3x per month
+- Files: CLAUDE.md, docs/design/evolving_graph.md
+
+---
+id: schemamem-instinct-file-naming
+trigger: "When creating or renaming a source file"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: colehank/schemamem
+---
+
+# Schemamem Instinct File Naming
+
+## Action
+
+Use snake_case for file names
+
+## Evidence
+
+- Pattern in src/schemamem/schema_memory.py
+- Pattern in src/schemamem/graph_core.py
+
+---
+id: schemamem-instinct-function-naming
+trigger: "When defining a function"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: colehank/schemamem
+---
+
+# Schemamem Instinct Function Naming
+
+## Action
+
+Use camelCase for function names
+
+## Evidence
+
+- Pattern in codeStyle.namingConventions.functions
+
+---
+id: schemamem-instinct-class-naming
+trigger: "When defining a class"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: colehank/schemamem
+---
+
+# Schemamem Instinct Class Naming
+
+## Action
+
+Use PascalCase for class names
+
+## Evidence
+
+- Pattern in codeStyle.namingConventions.classes
+
+---
+id: schemamem-instinct-constant-naming
+trigger: "When defining a constant"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: colehank/schemamem
+---
+
+# Schemamem Instinct Constant Naming
+
+## Action
+
+Use SCREAMING_SNAKE_CASE for constant names
+
+## Evidence
+
+- Pattern in codeStyle.namingConventions.constants
+
+---
+id: schemamem-instinct-relative-imports
+trigger: "When importing modules within the package"
+confidence: 0.85
+domain: code-style
+source: repo-analysis
+source_repo: colehank/schemamem
+---
+
+# Schemamem Instinct Relative Imports
+
+## Action
+
+Use relative imports
+
+## Evidence
+
+- Pattern in codeStyle.importStyle
+
+---
+id: schemamem-instinct-named-exports
+trigger: "When exporting functions or classes from a module"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: colehank/schemamem
+---
+
+# Schemamem Instinct Named Exports
+
+## Action
+
+Use named exports
+
+## Evidence
+
+- Pattern in codeStyle.exportStyle
+
+---
+id: schemamem-instinct-test-location
+trigger: "When adding or updating tests"
+confidence: 0.9
+domain: testing
+source: repo-analysis
+source_repo: colehank/schemamem
+---
+
+# Schemamem Instinct Test Location
+
+## Action
+
+Place test files in the separate tests/ folder
+
+## Evidence
+
+- Pattern in architecture.folderStructure.testLocation
+- Pattern in tests/test_system.py
+
+---
+id: schemamem-instinct-test-pattern
+trigger: "When naming a test file"
+confidence: 0.85
+domain: testing
+source: repo-analysis
+source_repo: colehank/schemamem
+---
+
+# Schemamem Instinct Test Pattern
+
+## Action
+
+Name test files as test_<module>.py and place in tests/
+
+## Evidence
+
+- Pattern in tests/test_system.py
+- Pattern in tests/test_graph_core.py
+
+---
+id: schemamem-instinct-unit-tests
+trigger: "When writing tests for a module"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: colehank/schemamem
+---
+
+# Schemamem Instinct Unit Tests
+
+## Action
+
+Write unit tests for core logic modules
+
+## Evidence
+
+- Pattern in testing.testTypes
+- Pattern in tests/test_graph_core.py
+
+---
+id: schemamem-instinct-commit-format
+trigger: "When writing a commit message"
+confidence: 0.9
+domain: git
+source: repo-analysis
+source_repo: colehank/schemamem
+---
+
+# Schemamem Instinct Commit Format
+
+## Action
+
+Use conventional commit prefixes: fix, feat, eval, docs, perf, chore
+
+## Evidence
+
+- Pattern in commits.prefixes
+- Seen in commit 'eval: correct the plan's broken interface and record wiring reality'
+
+---
+id: schemamem-instinct-commit-length
+trigger: "When writing a commit message"
+confidence: 0.7
+domain: git
+source: repo-analysis
+source_repo: colehank/schemamem
+---
+
+# Schemamem Instinct Commit Length
+
+## Action
+
+Keep commit messages concise, around 66 characters on average
+
+## Evidence
+
+- Pattern in commits.averageLength
+
+---
+id: schemamem-instinct-core-logic-iteration
+trigger: "When adding or refactoring core memory logic or arbitration"
+confidence: 0.98
+domain: workflow
+source: repo-analysis
+source_repo: colehank/schemamem
+---
+
+# Schemamem Instinct Core Logic Iteration
+
+## Action
+
+Edit or create core logic file, update/add corresponding test file, optionally update documentation, and verify all tests pass
+
+## Evidence
+
+- Workflow: core-logic-iteration-with-tests
+- Pattern in files src/schemamem/schema_memory.py, tests/test_system.py
+
+---
+id: schemamem-instinct-prompt-rule-update
+trigger: "When fixing extraction, entity grounding, or answer accuracy via prompt changes"
+confidence: 0.95
+domain: workflow
+source: repo-analysis
+source_repo: colehank/schemamem
+---
+
+# Schemamem Instinct Prompt Rule Update
+
+## Action
+
+Edit src/schemamem/prompts.py, describe reasoning in commit, optionally update or run tests
+
+## Evidence
+
+- Workflow: prompt-rule-update-for-extraction-or-answering
+- Pattern in files src/schemamem/prompts.py
+
+---
+id: schemamem-instinct-eval-doc-alignment
+trigger: "When updating evaluation plans, results, or aligning documentation with system behavior"
+confidence: 0.92
+domain: workflow
+source: repo-analysis
+source_repo: colehank/schemamem
+---
+
+# Schemamem Instinct Eval Doc Alignment
+
+## Action
+
+Edit docs/eval/evolution_comparison_plan.md and/or docs/design/full_paper_zh.md, optionally update CLAUDE.md, describe rationale in commit
+
+## Evidence
+
+- Workflow: evaluation-plan-and-paper-alignment
+- Pattern in files docs/eval/evolution_comparison_plan.md, docs/design/full_paper_zh.md
+
+---
+id: schemamem-instinct-perf-optimize-core
+trigger: "When reducing latency or computational cost in memory operations"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: colehank/schemamem
+---
+
+# Schemamem Instinct Perf Optimize Core
+
+## Action
+
+Edit src/schemamem/schema_memory.py to add batching, concurrency, or buffer logic, describe performance improvements in commit, optionally update config or tests
+
+## Evidence
+
+- Workflow: performance-optimization-in-core-logic
+- Seen in commit 'perf: batch query-time slot embeddings into one request'
+
+---
+id: schemamem-instinct-doc-frontier-update
+trigger: "When documenting a new model, direction, or conceptual advance"
+confidence: 0.88
+domain: workflow
+source: repo-analysis
+source_repo: colehank/schemamem
+---
+
+# Schemamem Instinct Doc Frontier Update
+
+## Action
+
+Edit CLAUDE.md and/or docs/design/evolving_graph.md, optionally update prototypes, describe rationale in commit
+
+## Evidence
+
+- Workflow: documentation-frontier-or-direction-update
+- Pattern in files CLAUDE.md, docs/design/evolving_graph.md
+
