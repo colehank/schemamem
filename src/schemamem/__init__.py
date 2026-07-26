@@ -5,6 +5,7 @@ change* from an *isolated exception* using a single criterion — the prediction
 residual of a new observation against the current belief — read along two axes
 (magnitude x cross-episode recurrence). See README for the full model.
 """
+from .config import RuntimeConfig
 from .core import (
     Action,
     Observation,
@@ -24,4 +25,5 @@ __all__ = [
     "Schema",
     "SchemaGraph",
     "SchemaMemorySystem",
+    "RuntimeConfig",
 ]

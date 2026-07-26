@@ -10,6 +10,46 @@
 
 ---
 
+## v6 — full-paper abstract (2026-07-22, supersedes v5 below for the CAMERA/full submission)
+
+> v5 was written for abstract registration and is now stale in four places: it names
+> LongMemEval/LoCoMo as the benchmarks (now three capability axes, LoCoMo demoted to a
+> coverage check), it claims only "competitive" (§5.1 now claims *beating* the branch
+> representative on each evolution axis), it does not surface reconstruction-gated
+> forgetting (now contribution #2, ON in the main config), and it does not show the
+> three-branches-to-three-axes correspondence. Results are still `[TBF]` — runs in flight.
+
+**Title (proposed):** SchemaMem: One Residual Arbitrates Change, Redundancy, and Exception in Agent Memory
+
+*Registered title was "SchemaMem: Building a Human-Memory-Inspired Memory Evolution System
+for LLM Agents". That leads with the cognitive inspiration, which §3.1/§3.2/§4.4 now
+explicitly demote to motivation-not-load-bearing — a gap a reviewer can name. Confirm
+whether AAAI permits a title change after registration before switching.*
+
+As LLM agents run for weeks or months, memory evolution—distilling a stream of arriving,
+sometimes contradictory observations into a knowledge model that stays current—becomes a
+core capability. Existing work pursues it along three separately developed mechanisms:
+consolidation, updating, and forgetting. We argue they share one defect: none carries an
+expectation, so each decides by a surface proxy—similarity, recency, or time and
+frequency—instead of asking what a new observation means relative to what the agent
+currently believes. The same decision is answered wrongly in three ways, forcing a genuine
+change and an isolated anomaly down the same path. Human memory answers it with a schema,
+which carries graded expectations and is restructured only as violations recur. We
+introduce SchemaMem, which models what an agent believes as named slots over a
+time-ordered observation history and scores each observation by its prediction residual
+against that schema. Read along two axes—residual magnitude and cross-episode
+recurrence—this single quantity decides every outcome: observations the schema can already
+reconstruct release their raw text, recurring violations revise the belief, and an
+isolated strong violation is kept verbatim as a protected exception. Forgetting is thus
+gated by reconstructability rather than time or frequency, so exceptions are structurally
+immune from it. The third outcome is one that proxy-driven systems cannot structurally
+produce, making it an existence proof that arbitration, not retrieval, is doing the work.
+We evaluate on three capability axes—change detection, knowledge update, and exception
+preservation—each against the evolution branch it targets, on a retrieval backbone shared
+with flat baselines, with single-hop parity as a built-in falsification test. `[TBF]`
+
+---
+
 ## Title (primary)
 
 **SchemaMem: Building a Human-Memory-Inspired Memory Evolution System for LLM Agents**

@@ -36,6 +36,32 @@ mem = SchemaMemorySystem(
 
 Explicit arguments win over environment variables.
 
+### 3. A `RuntimeConfig` object (unified, MemoryData-aligned)
+
+All endpoint/key/model settings are centralised in one dataclass whose field names match the
+MemoryData harness config (`base_url` / `api_key` / `model` / `embedding_*`). Pass it as `config=`;
+loose kwargs still override it, so nothing old breaks.
+
+```python
+from schemamem import SchemaMemorySystem, RuntimeConfig
+
+cfg = RuntimeConfig(
+    model="Qwen3-8B",
+    base_url="http://127.0.0.1:9908/v1",         # chat endpoint
+    embedding_model="Qwen3-Embedding-4B",
+    embedding_base_url="http://127.0.0.1:9009/v1",  # a SEPARATE embedding server, if any
+)
+mem = SchemaMemorySystem(config=cfg)
+```
+
+- `RuntimeConfig.from_env()` reads `OPENAI_BASE_URL` / `OPENAI_API_KEY`.
+- `RuntimeConfig.from_mapping(cfg_dict)` builds from a MemoryData YAML config — it reads both the
+  plain keys and the `schemamem_`-prefixed variants (`schemamem_base_url`,
+  `schemamem_embedding_api_key_env`, …), resolving `*_env` keys against the environment.
+- The embedding endpoint gets **its own client** when `embedding_base_url` differs from `base_url`
+  (previously the `embedding_*` args were accepted but ignored, so a separate embedding server was
+  never actually used).
+
 ## The `/v1` suffix (important)
 
 The OpenAI SDK posts to `<base_url>/chat/completions`. If your `base_url` is a

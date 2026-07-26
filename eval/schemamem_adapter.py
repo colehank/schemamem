@@ -31,9 +31,11 @@ if SCHEMAMEM_SOURCE_ROOT.exists() and str(SCHEMAMEM_SOURCE_ROOT) not in sys.path
 #   from schema_memory import SchemaMemorySystem
 # For now we degrade gracefully so the skeleton imports cleanly.
 try:
+    from config import RuntimeConfig  # type: ignore
     from schema_memory import SchemaMemorySystem  # type: ignore
     _HAVE_SOURCE = True
 except Exception:  # pragma: no cover - skeleton fallback
+    RuntimeConfig = None  # type: ignore
     SchemaMemorySystem = None  # type: ignore
     _HAVE_SOURCE = False
 
@@ -61,6 +63,17 @@ class SchemaMemAdapter:
         change_threshold: float = 0.5,          # genuine-change vs exception decision
         reconstruction_tolerance: float = 0.15, # epsilon for reconstruction-gated forgetting
         min_evidence_count: int = 2,            # cumulative count to trigger expectation update
+        # L1 extraction shape. The harness already chunks the context before calling
+        # add_chunk, so the QUANT sliding window may be re-splitting work the harness
+        # did — set l1_window_chars=0 to disable windowing and measure the difference.
+        l1_window_chars: int = 4000,
+        l1_quant_samples: int = 1,
+        # characters of raw episode text appended after the schema gist;
+        # 0 = schema-only context (pre-dual-store behaviour)
+        verbatim_budget: int = 24000,
+        # 0 = one add_chunk is one episode. Raise when the harness feeds a
+        # granularity finer than an episode (MemBench sends one TURN per call).
+        min_episode_chars: int = 0,
         **extra_kwargs,
     ) -> None:
         self.model = model
@@ -73,26 +86,56 @@ class SchemaMemAdapter:
         self.change_threshold = float(change_threshold)
         self.reconstruction_tolerance = float(reconstruction_tolerance)
         self.min_evidence_count = int(min_evidence_count)
+        self.l1_window_chars = int(l1_window_chars)
+        self.l1_quant_samples = int(l1_quant_samples)
+        self.verbatim_budget = int(verbatim_budget)
+        self.min_episode_chars = int(min_episode_chars)
 
-        # LLM client for answering (OpenAI-compatible: points at local vLLM 9908).
-        self._client = OpenAI(api_key=api_key or "EMPTY", base_url=api_base)
+        # One unified config (MemoryData-aligned keys) drives BOTH the answer client and the system.
+        if RuntimeConfig is not None:
+            cfg = RuntimeConfig(model=model, base_url=api_base, api_key=api_key,
+                                embedding_model=embedding_model,
+                                embedding_base_url=embedding_api_base,
+                                embedding_api_key=embedding_api_key)
+            self._client = OpenAI(api_key=cfg.api_key, base_url=cfg.base_url)
+        else:
+            cfg = None
+            self._client = OpenAI(api_key=api_key or "EMPTY", base_url=api_base)
 
         # Real memory system (populated when vendored source is present).
         if _HAVE_SOURCE and SchemaMemorySystem is not None:
             self._mem = SchemaMemorySystem(
-                model=model,
+                config=cfg,                     # carries model / base_url / api_key / embedding_*
                 retrieve_k=self.retrieve_k,
-                embedding_model=embedding_model,
-                embedding_provider=embedding_provider,
-                embedding_api_key=embedding_api_key,
-                embedding_api_base=embedding_api_base,
                 change_threshold=self.change_threshold,
                 reconstruction_tolerance=self.reconstruction_tolerance,
                 min_evidence_count=self.min_evidence_count,
+                l1_window_chars=self.l1_window_chars,
+                l1_quant_samples=self.l1_quant_samples,
+                verbatim_budget=self.verbatim_budget,
+                min_episode_chars=self.min_episode_chars,
                 state_path=state_path,
             )
         else:
             self._mem = None  # skeleton mode
+
+    @classmethod
+    def from_config(cls, cfg: dict) -> "SchemaMemAdapter":
+        """Build the adapter straight from a MemoryData config mapping — resolves endpoints/keys via
+        RuntimeConfig.from_mapping and reads the schemamem_* hyperparameters."""
+        if RuntimeConfig is None:
+            raise RuntimeError("vendor the SchemaMem source first so RuntimeConfig is importable")
+        rc = RuntimeConfig.from_mapping(cfg)
+        return cls(
+            model=rc.model, api_base=rc.base_url, api_key=rc.api_key,
+            embedding_model=rc.embedding_model, embedding_api_base=rc.embedding_base_url,
+            embedding_api_key=rc.embedding_api_key,
+            retrieve_k=int(cfg.get("retrieve_num", 10)),
+            change_threshold=float(cfg.get("schemamem_change_threshold", 0.5)),
+            reconstruction_tolerance=float(cfg.get("schemamem_reconstruction_tolerance", 0.15)),
+            min_evidence_count=int(cfg.get("schemamem_min_evidence_count", 2)),
+            state_path=cfg.get("state_path"),
+        )
 
     # -- write ----------------------------------------------------------------
     def add_chunk(self, text: str, timestamp: Optional[str] = None) -> None:

@@ -46,3 +46,5 @@ addopts = "-q"
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+# Design prototypes are illustrative (see docs/design/evolving_graph.md), not maintained code.
+extend-exclude = ["docs/design/prototypes"]

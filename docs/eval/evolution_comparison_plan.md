@@ -14,7 +14,7 @@
 | 轴 | 定义 | benchmark 抓手 | 主要对标 |
 |---|---|---|---|
 | **A. 改变检测** | 冲突时正确改信念 | MAB FactConsolidation SH-6k | Mem0(SH 原报告 18%) |
-| **B. 知识更新** | 用户属性演化 | LongMemEval-s knowledge-update(78 题) | Mem0、A-MEM |
+| **B. 知识更新** | 用户属性演化 | LongMemEval-s knowledge-update(**MAB 子集 45 题**;官方 78 题版每实例独立 haystack,500 次构建不可行) | Mem0、A-MEM |
 | **C. 例外保留** | 孤立冲突留作 protect-as-exception | MemBench noisy | 三 baseline 都缺此能力 |
 
 **兜底论证**(即使数字差,也必须站住):C 轴上 SchemaMem 结构性独有——`Slot.superseded` 演化链 + `Slot.exceptions` 例外层是别的方法**无法表达**的。
@@ -58,7 +58,9 @@ for sess in instance["haystack_sessions"]:
     body = "\n".join(f"user: {t['content']}" for t in sess if t["role"]=="user")
     mem.add_chunk(body, timestamp=sess["timestamp"], speakers=["user"])
 mem.finalize()
-ans = mem.answer(instance["question"])   # 存到 lme_ku_results.json
+# 注意:没有 mem.answer() —— 早期草稿写错了。真实接口是两步(与 harness 契约一致):
+ctx, _groups = mem.retrieve_with_source_groups(instance["question"])
+ans = mem.ask_with_retrieved_context(instance["question"], ctx)
 ```
 
 **输出格式**(必须四方法共用):
@@ -153,7 +155,166 @@ ans = mem.answer(instance["question"])   # 存到 lme_ku_results.json
   - MB-noisy traj0: artifact `055c8854-bda8-41ab-9e48-136e05bd7dc1`
   - 合集: artifact `6cc70cdc-822e-4322-895e-18ba1fb34176`
 - **LME-KU 15 题诊断**(11/15 迭代过程): artifact `4e14fd91-3fd5-4d8f-b55d-c96c560c2d7d`;
-- **SchemaMem 主接口**: `SchemaMemorySystem.add_chunk / .add_chunks / .finalize / .answer`;`bench_adapters.add_fc_fact` for FC.
+- **SchemaMem 主接口**: `SchemaMemorySystem.add_chunk / .add_chunks / .finalize / .retrieve_with_source_groups / .ask_with_retrieved_context`;`bench_adapters.add_fc_fact` for FC。(**没有 `.answer()`** —— 本文档早期版本误载,已订正。)
+
+---
+
+## 5b. 接线现状与本轮决定(2026-07-22 核实)
+
+**host 上的真实状态**(`turing` → `~/SchemaMem-eval/MemoryData`,ssh config 里是 `turing` 不是 `turing_pub`):
+
+- **三个基线 + 两个无演化对照全部已接好**,不需要重写 adapter:
+  `methods/{a_mem,mem0,memorybank,schemamem,embedding_rag}/` 齐全;
+  `config/{hybrid_a_mem,sequential_mem0,memorybank,hybrid_schemamem}.yaml` +
+  `config/reference_{long_context_agent,embedding_rag}.yaml`。
+- **数据齐全**:`~/.cache/huggingface` 42G,含 `datasets--ai-hyz--MemoryAgentBench`
+  与 `datasets--xiaowu0162--longmemeval-cleaned`;`datasets/{LoCoMo,MemBench,longBench_*}`。
+- **既有结果只是 smoke**:四方法都只在 Qwen3-8B、`max_test_samples: 5` 下跑过,**无任何真实规模数字**。
+- **本地缺失**:`bench_samples.json` 只在 host 家目录,从未提交进本仓库;`/tmp/lme_oracle.json` 已随 /tmp 清空消失。
+
+**本轮决定**:
+
+1. **统一口径 = gpt-4o-mini + text-embedding-3-small(dim 1536),经 dmxapi 网关**。
+   一度考虑 gpt-4o,按 harness 实参估算主表全量约 $5k–10k(mini 约 1/16),且 §7 已记录
+   "4o probe 对已诊断失败无用",故维持 mini。四个 gpt-4o-mini config 已建:
+   `config/{schemamem,a_mem,mem0,memorybank}_gpt4omini.yaml`,除机制外 LLM/embedding 完全同源。
+2. **检索预算:保持各方法 harness 默认,不对齐**(选项 a)。当前值:
+   A-MEM `retrieve_num=2`、Mem0 `100`、SchemaMem `10`、MemoryBank `10`。
+   单位不可比(A-MEM 的 note 含上下文+关键词+链接,Mem0 的 memory 是单句事实)。
+   **论文须主动披露这张表并说明单位差异** —— 主动说是免疫,被问出来是失分。
+   选 (a) 而非按 token 对齐,是为了不落"为求胜而调对手参数"的口实。
+3. **凭据**:host `~/.schemamem_env`(`chmod 600`,不进仓库),内含 `OPENAI_API_KEY` /
+   `OPENAI_BASE_URL`;运行前 `. ~/.schemamem_env`。
+
+**仍缺的接线**:
+
+- `benchmark/memoryagentbench/Conflict_Resolution/config/` 下**只有 `Factconsolidation_mh_6k.yaml`,缺 SH-6k**,而 A 轴要 SH+MH 两档 → 需建 SH config。
+- 各 dataset config 的 `max_test_samples: 5` 是 smoke 值,全量跑须改。
+- Phase 3 对比图要求的 `dump_memory(traj_id) -> dict` 钩子,**SchemaMem 侧尚未实现**(数据都在 `SchemaGraph` 里,预计 ~20 行)。
+
+**运行方式**(host 上,conda env `memory-bench`):
+
+```bash
+cd ~/SchemaMem-eval/MemoryData && . ~/.schemamem_env
+source ~/miniconda3/etc/profile.d/conda.sh && conda activate memory-bench
+python main.py --agent_config config/schemamem_gpt4omini.yaml \
+  --dataset_config benchmark/memoryagentbench/Accurate_Retrieval/config/LongMemEval/Longmemeval_s.yaml \
+  --max_test_queries_ablation 1 --force
+```
+
+---
+
+## 5c. 首轮 LongMemEval 实测与两个结构性发现(2026-07-22)
+
+**跑法**:MAB 子集 300 题 / 5 个共享 context,四方法同口径(gpt-4o-mini + text-embedding-3-small,dmxapi)。
+**主口径**:LongMemEval 官方 LLM-as-Judge(`evaluation/longmemeval/`,judge=gpt-4o,纯后处理)。
+选它是在看到结果之前定的,理由有二:字符串指标给出互相矛盾的赢家;且 single-session-preference
+的 gold 是评分量规而非短答案,四方法在该类上恒为 0 —— 基准的 10% 不用 judge 就没有信号。
+
+| question type | SchemaMem | MemoryBank | A-MEM | Mem0 |
+|---|---|---|---|---|
+| knowledge-update | 34.9 | **60.5** | 48.8 | 32.6 |
+| single-session-assistant | 3.3 | **66.7** | 63.3 | 6.7 |
+| single-session-user | 34.1 | **61.0** | 48.8 | 17.1 |
+| temporal-reasoning | 17.8 | **30.1** | 27.4 | 24.7 |
+| abstention | 46.2 | 46.2 | **69.2** | 61.5 |
+| single-session-preference | 6.7 | **16.7** | 16.7 | 16.7 |
+| multi-session | **18.6** | 15.7 | 17.1 | 12.9 |
+| **总计** | **21.3** | **38.3** | 35.3 | 21.0 |
+
+**七类只赢一类,总分倒数第二,主打的 knowledge-update 输 25 个点。** 如实记录,不粉饰。
+
+### 发现一:上下文预算相差 42 倍,当前对比不成立
+
+| 方法 | 喂给答题模型的 input_len | judge |
+|---|---|---|
+| MemoryBank | **41,059** | 38.3% |
+| A-MEM | 10,744 | 35.3% |
+| Mem0 | 4,049 | 21.0% |
+| **SchemaMem** | **973** | 21.3% |
+
+**judge 准确率几乎完全按上下文大小排序。** MemoryBank 的 `max_context_chars: 60000` 等于
+"把相关内容全给模型";我们渲染 top-10 槽位仅约 973 token。
+
+这直接违反 `full_paper_zh.md` §5.1 承诺的「与各基线**同一检索骨架**」——**该承诺目前是假的**,
+必须在论文中兑现或撤回。把预算拉平不是调参求胜,是让对比成立。
+
+**但不能简单把预算灌满**:灌到 40k 我们就变成 Long Context,仲裁机制零贡献,赢了反而证伪自己的
+故事。正确的实验是**预算对齐下的比较**,并给出预算-准确率曲线:图式压缩若真有价值,应体现为
+**更高的每-token 信息效率**,即在相同预算下胜出。已启动 `retrieve_num` ∈ {10, 50, 200} 扫描。
+
+### 发现二:抽取有损,逐字块打败结构化制品
+
+MemoryBank 几乎不做 LLM 抽取(切块 + 嵌入 + 遗忘曲线),却在**知识更新**上领先 25 点。
+抽样核对显示我们的失败多为**标量值抽错**(gold `five` → 我们答 `Three`;gold `9 months` →
+`6 months`),而非仲裁错。这与 `full_paper_zh.md` §3.3 已引的旁证一致——
+"逐字块打败结构化制品,连知识更新类结构化都吃亏"——但论文当时只把它用作
+"例外须逐字留"的支持,**现在的数据表明它适用于整条管线**。
+
+已修的一个具体损失点:assistant 贡献型发言被 L1 改写为"用户对某事感兴趣",答案被销毁
+(ss-assistant 3.3% vs 66.7%,30 题)。修复见 commit 1b54c54,验证跑进行中。
+
+---
+
+## 5d. 迭代日志:诊断驱动的方法改进(2026-07-22)
+
+首轮实测(§5c)显示 SchemaMem 全面落后。逐项定位后修掉八个缺陷,**没有一处是调参**,
+每一处都由一个可复现的测量指认。按发现顺序:
+
+| # | 缺陷 | 指认它的测量 | 提交 |
+|---|---|---|---|
+| 1 | 查询期逐槽位发 embedding 请求 | `query_time_len` 108s → 2s | `9cf8abc` |
+| 2 | assistant 的**内容贡献**被改写成"用户感兴趣" | ss-assistant 3.3% vs MemoryBank 66.7% | `1b54c54` |
+| 3 | **图式替代原文,而非索引原文** | `input_len` 973 vs 基线 41k | `6626da6` |
+| 4 | L1 consolidation 吞掉独立事实清单 | FC 构建耗时 0.62s(几乎没建) | `712f34c` |
+| 5 | 答题 prompt 无"记忆压倒常识"规则 | FC 33 → 51.5 | `4304aaa` |
+| 6 | 实体名被句点截断("L. Ron Hubbard"→"L") | 200 事实:77 → 187 实体 | `cba6bc9` |
+| 7 | **L2 prompt 塞入整个图式,规模越大抽取越差** | 覆盖率随图增长 93% → 66% | `47fd3de` |
+| 8 | 实体锚定要求完整字符串匹配 | FC-32k 27 → 33 | `e4b29cf` |
+
+**第 3 与第 7 是架构级问题。** 第 7 尤其致命:每次 L2 调用都序列化整个图式作为 prompt 上下文,
+到约 800 实体时状态 JSON 淹没了待抽取的事实 —— **记忆越大、记性越差**,这在长期记忆系统里是
+不可接受的失效模式。
+
+### FC 改变检测轴的轨迹
+
+| 版本 | FC-SH-32k EM |
+|---|---|
+| 首轮 | 22.0 |
+| + 原文层 + consolidation 范围 | 26.0 |
+| + 抽取覆盖(#6 #7) | 27.0 |
+| + 词元级实体锚定(#8) | **33.0** |
+
+同档基线:**MemoryBank 37.0、A-MEM 18.0、Mem0 5.0**。从垫底到第二,落后第一 4 分。
+
+### 一个必须写进论文的实验设计发现
+
+**FC-SH-6k 上 Long Context 得 85.0,而三个记忆系统全在 51–57。**
+
+该档上下文共 26,157 字符,**完整装得进模型窗口**,于是任何摘要/结构化都只是净信息损失,
+"不做记忆"成为不可战胜的上界。各档规模:
+
+| 档 | 上下文字符 | ≈token | 装得进 128k 窗口? |
+|---|---|---|---|
+| 6k | 26,157 | 6.5k | ✅ |
+| 32k | 136,565 | 34k | ✅ |
+| 64k | 273,473 | 68k | ✅ |
+| 262k | 1,118,123 | 280k | ❌ |
+
+**记忆系统只在上下文塞不下时才有存在理由。** 主表档位须选在窗口之外;6k 档应作为
+**方法学论点**如实报告(界定适用域),而非隐去。
+
+### 尚未关闭的瓶颈:检索召回
+
+FC-32k 上分离测量:**实体在图中的题目占 86%,但只有 45% 能把正确值送进上下文**;
+而一旦送进去,答对率达 79%。**召回是唯一剩下的杠杆** —— 若能提到 90%,按现有答对率
+可达约 70 分,远超所有基线。
+
+### 已证伪的假设(记录以免重复)
+
+- **k=1 vs k=2 在 FC-32k 上是 24.0 vs 22.0,落在噪声内。** 信念不更新**不是**因为顺应
+  需要两个 episode,而是因为两条观测中的一条根本没通过抽取阶段。§4.4 关于 k 随基准语义
+  配置的论述在此**不适用**,不要拿 FC 当它的证据。
 
 ---
 
